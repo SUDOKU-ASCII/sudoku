@@ -132,8 +132,10 @@ func Dial(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
 
 	// 2. 写入 HTTP POST 伪装头
 	// 这层不在 Sudoku 编码内，是最外层的伪装
-	if err := httpmask.WriteRandomRequestHeader(rawConn, cfg.ServerAddress); err != nil {
-		return nil, fmt.Errorf("write http mask failed: %w", err)
+	if !cfg.DisableHTTPMask {
+		if err := httpmask.WriteRandomRequestHeader(rawConn, cfg.ServerAddress); err != nil {
+			return nil, fmt.Errorf("write http mask failed: %w", err)
+		}
 	}
 
 	// 3. 包装 Sudoku 协议层

@@ -47,9 +47,11 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 	}
 
 	// 2. Send HTTP mask
-	if err := httpmask.WriteRandomRequestHeader(rawRemote, d.Config.ServerAddress); err != nil {
-		rawRemote.Close()
-		return nil, fmt.Errorf("write http mask failed: %w", err)
+	if !d.Config.DisableHTTPMask {
+		if err := httpmask.WriteRandomRequestHeader(rawRemote, d.Config.ServerAddress); err != nil {
+			rawRemote.Close()
+			return nil, fmt.Errorf("write http mask failed: %w", err)
+		}
 	}
 
 	return ClientHandshake(rawRemote, d.Config, d.Table, d.PrivateKey)

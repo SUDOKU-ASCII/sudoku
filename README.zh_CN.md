@@ -3,7 +3,10 @@
     一种基于数独的代理协议，开启了明文 / 低熵代理时代
 </p>
 
-# Sudoku ASCII
+# Sudoku (ASCII)
+
+> [!NOTE]
+> Sudoku 协议目前已被 [Mihomo](https://github.com/MetaCubeX/mihomo) 内核支持！
 
 [![构建状态](https://img.shields.io/github/actions/workflow/status/saba-futai/sudoku/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/saba-futai/sudoku/actions)
 [![最新版本](https://img.shields.io/github/v/release/saba-futai/sudoku?style=for-the-badge)](https://github.com/saba-futai/sudoku/releases)
@@ -93,7 +96,8 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
   "ascii": "prefer_entropy",
   "padding_min": 2,
   "padding_max": 7,
-  "enable_mieru": true,
+  "disable_http_mask": false,
+  "enable_mieru": false,
   "mieru_config": {}
 }
 ```
