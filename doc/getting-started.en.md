@@ -13,7 +13,7 @@ Pick one:
 2) Build locally:
 ```bash
 git clone https://github.com/saba-futai/sudoku.git
-cd Sudoku_ASCII
+cd sudoku
 go build -o sudoku ./cmd/sudoku-tunnel
 ```
 

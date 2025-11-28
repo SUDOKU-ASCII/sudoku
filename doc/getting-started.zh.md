@@ -13,7 +13,7 @@
 2) 自行编译：
 ```bash
 git clone https://github.com/saba-futai/sudoku.git
-cd Sudoku_ASCII
+cd sudoku
 go build -o sudoku ./cmd/sudoku-tunnel
 ```
 

@@ -15,7 +15,7 @@
 
 ## 安卓客户端：
 
-**[Sudodroid](https://github.com/Futaiii/sudodroid)**
+**[Sudodroid](https://github.com/saba-futai/sudoku-andorid)**
 
 ## 核心特性
 
