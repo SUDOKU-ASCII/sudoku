@@ -72,16 +72,38 @@ func ServerHandshake(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, e
 
 	// 0. HTTP 头处理层 (读取并丢弃伪装头，同时记录字节)
 	bufReader := bufio.NewReader(rawConn)
-	httpHeaderData, err := httpmask.ConsumeHeader(bufReader)
-	if err != nil {
-		// HTTP 头都不对，直接返回错误，此时还没进入 Sudoku 层
-		// 这里的错误通常意味着非 HTTP 流量或格式错误
-		rawConn.SetReadDeadline(time.Time{})
-		return nil, "", &HandshakeError{
-			Err:            fmt.Errorf("invalid http header: %w", err),
-			RawConn:        rawConn,
-			HTTPHeaderData: httpHeaderData,
-			ReadData:       nil,
+
+	// 自动检测逻辑：
+	// 1. 如果 DisableHTTPMask = true，则直接跳过检测
+	// 2. 如果 DisableHTTPMask = false，则 Peek 前 4 字节
+	//    - 如果是 "POST"，则认为是 HTTP 伪装，进行 ConsumeHeader
+	//    - 否则认为是无伪装模式，跳过 ConsumeHeader
+
+	shouldConsumeMask := false
+	var httpHeaderData []byte
+
+	if !cfg.DisableHTTPMask {
+		peekBytes, err := bufReader.Peek(4)
+		if err == nil && string(peekBytes) == "POST" {
+			shouldConsumeMask = true
+		}
+		// 如果 Peek 失败（比如数据不足），这里不处理，留给后续 Read 处理或者超时
+		// 但通常 TCP 连接建立后应该能读到数据
+	}
+
+	if shouldConsumeMask {
+		var err error
+		httpHeaderData, err = httpmask.ConsumeHeader(bufReader)
+		if err != nil {
+			// HTTP 头都不对，直接返回错误，此时还没进入 Sudoku 层
+			// 这里的错误通常意味着非 HTTP 流量或格式错误
+			rawConn.SetReadDeadline(time.Time{})
+			return nil, "", &HandshakeError{
+				Err:            fmt.Errorf("invalid http header: %w", err),
+				RawConn:        rawConn,
+				HTTPHeaderData: httpHeaderData,
+				ReadData:       nil,
+			}
 		}
 	}
 

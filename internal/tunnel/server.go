@@ -109,23 +109,37 @@ func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Tab
 	// 0. HTTP Header Check
 	bufReader := bufio.NewReader(rawConn)
 	rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
-	consumed, err := httpmask.ConsumeHeader(bufReader)
-	rawConn.SetReadDeadline(time.Time{})
 
-	if err != nil {
-		// Return rawConn wrapped in BufferedConn so caller can handle fallback
-		// Enable recording to capture all consumed data for fallback replay
-		recorder := new(bytes.Buffer)
-		if len(consumed) > 0 {
-			recorder.Write(consumed)
+	shouldConsumeMask := false
+	var consumed []byte
+	var err error
+
+	if !cfg.DisableHTTPMask {
+		peekBytes, _ := bufReader.Peek(4) // Ignore error, if peek fails, we assume no mask or let subsequent read handle it
+		if len(peekBytes) == 4 && string(peekBytes) == "POST" {
+			shouldConsumeMask = true
 		}
-		badConn := &BufferedConn{
-			Conn:     rawConn,
-			r:        bufReader,
-			recorder: recorder,
-		}
-		return nil, &SuspiciousError{Err: fmt.Errorf("invalid http header: %w", err), Conn: badConn}
 	}
+
+	if shouldConsumeMask {
+		consumed, err = httpmask.ConsumeHeader(bufReader)
+		if err != nil {
+			rawConn.SetReadDeadline(time.Time{})
+			// Return rawConn wrapped in BufferedConn so caller can handle fallback
+			// Enable recording to capture all consumed data for fallback replay
+			recorder := new(bytes.Buffer)
+			if len(consumed) > 0 {
+				recorder.Write(consumed)
+			}
+			badConn := &BufferedConn{
+				Conn:     rawConn,
+				r:        bufReader,
+				recorder: recorder,
+			}
+			return nil, &SuspiciousError{Err: fmt.Errorf("invalid http header: %w", err), Conn: badConn}
+		}
+	}
+	rawConn.SetReadDeadline(time.Time{})
 
 	bConn := &BufferedConn{Conn: rawConn, r: bufReader}
 

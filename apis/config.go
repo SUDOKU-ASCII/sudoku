@@ -83,6 +83,14 @@ type ProtocolConfig struct {
 	// 设置过小可能导致慢速网络握手失败
 	// 设置过大可能使服务器容易受到慢速攻击
 	HandshakeTimeoutSeconds int
+
+	// ============ 通用开关 ============
+
+	// DisableHTTPMask 是否禁用 HTTP 伪装层
+	// 默认 false (启用伪装)
+	// 如果为 true，客户端不发送伪装头，服务端也不检测伪装头
+	// 注意：服务端支持自动检测，即使此项为 false，也能处理不带伪装头的客户端（前提是首字节不匹配 POST）
+	DisableHTTPMask bool
 }
 
 // Validate 验证配置的有效性

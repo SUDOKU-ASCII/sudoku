@@ -4,7 +4,10 @@
     A Sudoku-based proxy protocol, ushering in the era of plaintext / low-entropy proxies
 </p>
 
-# Sudoku ASCII
+# Sudoku (ASCII)
+
+
+> Sudoku protocol is now supported by [Mihomo](https://github.com/MetaCubeX/mihomo) kernel!
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/saba-futai/sudoku/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/saba-futai/sudoku/actions)
 [![Latest Release](https://img.shields.io/github/v/release/saba-futai/sudoku?style=for-the-badge)](https://github.com/saba-futai/sudoku/releases)
@@ -96,7 +99,8 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
   "ascii": "prefer_entropy",
   "padding_min": 2,
   "padding_max": 7,
-  "enable_mieru": true,
+  "disable_http_mask": false,
+  "enable_mieru": false,
   "mieru_config": {}
 }
 ```
@@ -156,4 +160,3 @@ Run the program specifying the `config.json` path as an argument:
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=saba-futai/sudoku&type=Date)](https://star-history.com/#saba-futai/sudoku)
-```

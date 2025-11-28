@@ -17,6 +17,7 @@ type Config struct {
 	ASCII            string       `json:"ascii"`        // "prefer_entropy" (默认): 低熵, "prefer_ascii": 纯ASCII字符，高熵
 	EnableMieru      bool         `json:"enable_mieru"` // 开启上下行分离
 	MieruConfig      *MieruConfig `json:"mieru_config"` // Mieru 特定配置
+	DisableHTTPMask  bool         `json:"disable_http_mask"`
 }
 
 type MieruConfig struct {
