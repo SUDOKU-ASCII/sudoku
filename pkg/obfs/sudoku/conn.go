@@ -180,9 +180,13 @@ func (sc *Conn) Read(p []byte) (n int, err error) {
 			break
 		}
 
-		nr, rErr := sc.reader.Read(sc.rawBuf)
+		buf := sc.rawBuf
+		if buf == nil {
+			return 0, io.ErrClosedPipe
+		}
+		nr, rErr := sc.reader.Read(buf)
 		if nr > 0 {
-			chunk := sc.rawBuf[:nr]
+			chunk := buf[:nr]
 			sc.recordLock.Lock()
 			if sc.recording {
 				sc.recorder.Write(chunk)
