@@ -1,0 +1,102 @@
+name: Cross-Platform Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - goos: linux
+            goarch: amd64
+            asset_name: sudoku-linux-amd64
+          - goos: linux
+            goarch: arm64
+            asset_name: sudoku-linux-arm64
+          # Windows
+          - goos: windows
+            goarch: amd64
+            asset_name: sudoku-windows-amd64
+            extension: .exe
+          # macOS
+          - goos: darwin
+            goarch: amd64
+            asset_name: sudoku-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            asset_name: sudoku-darwin-arm64
+          # FreeBSD
+          - goos: freebsd
+            goarch: amd64
+            asset_name: sudoku-freebsd-amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          check-latest: true
+
+      - name: Build Binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          OUTPUT_NAME=sudoku${{ matrix.extension }}
+          go build -ldflags "-s -w" -o $OUTPUT_NAME ./cmd/sudoku-tunnel
+
+      - name: Package Assets
+        run: |
+          BINARY_NAME=sudoku${{ matrix.extension }}
+          ASSET_NAME=${{ matrix.asset_name }}
+          
+          cp configs/config.json config.json
+          
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip ${ASSET_NAME}.zip ${BINARY_NAME} config.json
+            echo "ARCHIVE_NAME=${ASSET_NAME}.zip" >> $GITHUB_ENV
+          else
+            tar -czvf ${ASSET_NAME}.tar.gz ${BINARY_NAME} config.json
+            echo "ARCHIVE_NAME=${ASSET_NAME}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.asset_name }}
+          path: ${{ env.ARCHIVE_NAME }}
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          merge-multiple: true
+          path: dist
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,72 @@
+<svg width="600" height="200" viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <style>
+            .brutal-text { font-family: 'Courier New', 'Courier', monospace; font-weight: 900; fill: #000; }
+            .code-font { font-family: 'Courier New', monospace; font-size: 14px; fill: #000; font-weight: bold; }
+            .shadow { fill: #000; }
+        </style>
+    </defs>
+
+    <!-- 装饰背景元素 -->
+    <rect x="450" y="30" width="100" height="100" fill="#FF00FF" stroke="#000" stroke-width="3" />
+    <rect x="460" y="40" width="100" height="100" fill="none" stroke="#000" stroke-width="3" />
+
+    <!-- 主容器阴影 -->
+    <rect x="60" y="30" width="360" height="140" class="shadow" />
+
+    <!-- 主容器 -->
+    <rect x="50" y="20" width="360" height="140" fill="#FFF500" stroke="#000" stroke-width="4" />
+
+    <!-- 标题区域 -->
+    <rect x="50" y="20" width="360" height="40" fill="#FFF" stroke="#000" stroke-width="4" />
+    <text x="65" y="48" class="brutal-text" font-size="24">SUDOKU // ASCII</text>
+
+    <!-- 装饰性三个点 -->
+    <circle cx="380" cy="40" r="5" fill="#000"/>
+    <circle cx="360" cy="40" r="5" fill="#000"/>
+    <circle cx="340" cy="40" r="5" fill="#000"/>
+
+    <!-- 4x4 网格区域 (左侧) -->
+    <g transform="translate(70, 75)">
+        <rect x="0" y="0" width="80" height="80" fill="#FFF" stroke="#000" stroke-width="3"/>
+        <!-- 网格线 -->
+        <path d="M40 0 L40 80 M0 40 L80 40" stroke="#000" stroke-width="3"/>
+        <path d="M20 0 L20 80 M60 0 L60 80 M0 20 L80 20 M0 60 L80 60" stroke="#000" stroke-width="1"/>
+
+        <!-- 固定数字 -->
+        <text x="10" y="15" text-anchor="middle" class="code-font">1</text>
+        <text x="30" y="15" text-anchor="middle" class="code-font">?</text>
+        <text x="50" y="15" text-anchor="middle" class="code-font">3</text>
+        <text x="70" y="15" text-anchor="middle" class="code-font">4</text>
+
+        <text x="10" y="35" text-anchor="middle" class="code-font">3</text>
+        <text x="30" y="35" text-anchor="middle" class="code-font">4</text>
+
+        <!-- 动画数字：模拟回溯算法计算中 -->
+        <text x="50" y="35" text-anchor="middle" class="code-font" fill="red">
+            <animate attributeName="fill" values="#000;red;#000" dur="0.2s" repeatCount="indefinite"/>
+            <animate id="calc" attributeName="visibility" values="visible" dur="2s" repeatCount="indefinite"/>
+            <set attributeName="text-content" to="1" begin="0s;calc.end" dur="0.5s"/>
+            <set attributeName="text-content" to="2" begin="0.5s" dur="0.5s"/>
+            <set attributeName="text-content" to="1" begin="1.0s" dur="0.5s"/>
+            <set attributeName="text-content" to="2" begin="1.5s" dur="0.5s"/>
+            1
+        </text>
+    </g>
+
+    <!-- 右侧代码/文字区域 -->
+    <g transform="translate(170, 80)">
+        <text x="0" y="10" class="code-font">> func Solve(b) {</text>
+        <text x="0" y="30" class="code-font">>   if valid return</text>
+        <text x="0" y="50" class="code-font">>   backtrack()...</text>
+        <text x="0" y="70" class="code-font">> }<tspan fill="#000">_</tspan>
+            <animate attributeName="opacity" values="1;0;1" dur="0.8s" repeatCount="indefinite" />
+        </text>
+    </g>
+
+    <!-- 贴纸标签 -->
+    <g transform="translate(420, 140) rotate(-10)">
+        <rect x="0" y="0" width="120" height="30" fill="#000" />
+        <text x="60" y="22" text-anchor="middle" fill="#FFF" class="brutal-text" font-size="16">SUDOKU.GO</text>
+    </g>
+</svg>

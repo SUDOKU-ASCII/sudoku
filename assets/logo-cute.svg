@@ -1,0 +1,71 @@
+<svg width="600" height="200" viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <!-- 渐变定义 -->
+        <linearGradient id="gradPink" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#FFE6EA;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#FFB7C5;stop-opacity:1" />
+        </linearGradient>
+        <linearGradient id="gradBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#E0F7FA;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#A0D8EF;stop-opacity:1" />
+        </linearGradient>
+        <!-- 字体 -->
+        <style>
+            .kawaii-text { font-family: 'Comic Sans MS', 'Chalkboard SE', sans-serif; font-weight: bold; fill: #555; }
+            .grid-num { font-family: 'Arial Rounded MT Bold', sans-serif; font-weight: bold; fill: #FFF; text-anchor: middle; dominant-baseline: middle; font-size: 24px; filter: drop-shadow(1px 1px 0px rgba(0,0,0,0.1)); }
+        </style>
+    </defs>
+
+    <!-- 整体漂浮动画组 -->
+    <g>
+        <animateTransform attributeName="transform" type="translate" values="0 0; 0 -5; 0 0" dur="3s" repeatCount="indefinite" />
+
+        <!-- 装饰星星 (带闪烁动画) -->
+        <g fill="#FFD700">
+            <path d="M50 30 L53 40 L63 40 L55 48 L58 58 L50 52 L42 58 L45 48 L37 40 L47 40 Z" opacity="0.8" transform="translate(-15, -10) rotate(-5 60 60)">
+                <animate attributeName="opacity" values="0.8;0.2;0.8" dur="2s" repeatCount="indefinite" />
+            </path>
+            <path d="M550 150 L553 160 L563 160 L555 168 L558 178 L550 172 L542 178 L545 168 L537 160 L547 160 Z" opacity="0.6">
+                <animate attributeName="opacity" values="0.6;1;0.6" dur="2.5s" repeatCount="indefinite" />
+            </path>
+            <circle cx="480" cy="40" r="5" fill="#A0D8EF">
+                <animate attributeName="r" values="5;7;5" dur="1.5s" repeatCount="indefinite" />
+            </circle>
+        </g>
+
+        <!-- 主标题文字 -->
+        <text x="220" y="90" font-size="50" fill="#FFB7C5" stroke="#FFF" stroke-width="4" font-family="'Arial Rounded MT Bold', sans-serif" font-weight="bold">SUDOKU</text>
+        <text x="220" y="90" font-size="50" fill="#FFB7C5" font-family="'Arial Rounded MT Bold', sans-serif" font-weight="bold">SUDOKU</text>
+
+        <text x="220" y="135" font-size="30" fill="#A0D8EF" font-family="'Arial Rounded MT Bold', sans-serif" letter-spacing="2">ASCII 4x4</text>
+
+        <!-- 4x4 数独网格主体 (左侧) -->
+        <g transform="translate(60, 40) rotate(-5 60 60)">
+            <!-- 背景底板 -->
+            <rect x="-5" y="-5" width="130" height="130" rx="15" fill="#FFF" stroke="#A0D8EF" stroke-width="4" />
+
+            <!-- 2x2 区域色块 (表达数独逻辑) -->
+            <rect x="0" y="0" width="60" height="60" rx="8" fill="url(#gradPink)" />
+            <rect x="60" y="0" width="60" height="60" rx="8" fill="url(#gradBlue)" />
+            <rect x="0" y="60" width="60" height="60" rx="8" fill="url(#gradBlue)" />
+            <rect x="60" y="60" width="60" height="60" rx="8" fill="url(#gradPink)" />
+
+            <!-- 网格线 -->
+            <path d="M60 0 L60 120 M0 60 L120 60" stroke="#FFF" stroke-width="4" stroke-linecap="round"/>
+            <path d="M30 0 L30 120 M90 0 L90 120 M0 30 L120 30 M0 90 L120 90" stroke="#FFF" stroke-width="2" opacity="0.6"/>
+
+            <!-- 数字 (4x4 解) -->
+            <text x="15" y="15" class="grid-num">1</text> <text x="45" y="15" class="grid-num">2</text>
+            <text x="75" y="15" class="grid-num">3</text> <text x="105" y="15" class="grid-num">4</text>
+
+            <text x="15" y="45" class="grid-num">3</text> <text x="45" y="45" class="grid-num">4</text>
+            <text x="75" y="45" class="grid-num">1</text> <text x="105" y="45" class="grid-num">2</text>
+
+            <text x="15" y="75" class="grid-num">2</text> <text x="45" y="75" class="grid-num">1</text>
+            <text x="75" y="75" class="grid-num">4</text> <text x="105" y="75" class="grid-num">3</text>
+
+            <text x="15" y="105" class="grid-num">4</text> <text x="45" y="105" class="grid-num">3</text>
+            <text x="75" y="105" class="grid-num">2</text> <text x="105" y="105" class="grid-num">1</text>
+        </g>
+    </g>
+</svg>

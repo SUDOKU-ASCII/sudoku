@@ -1,0 +1,78 @@
+// internal/app/server.go
+package app
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"time"
+
+	"github.com/saba-futai/sudoku/internal/config"
+	"github.com/saba-futai/sudoku/internal/handler"
+	"github.com/saba-futai/sudoku/internal/hybrid"
+	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+)
+
+func RunServer(cfg *config.Config, table *sudoku.Table) {
+	// 1. 启动 Mieru 服务 (Split 模式专用)
+	mgr := hybrid.GetInstance(cfg)
+	if err := mgr.StartMieruServer(); err != nil {
+		log.Fatalf("Failed to start Mieru Server: %v", err)
+	}
+
+	// 2. 监听 TCP 端口
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.LocalPort))
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("Server on :%d (Fallback: %s)", cfg.LocalPort, cfg.FallbackAddr)
+
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			continue
+		}
+		go handleServerConn(c, cfg, table, mgr)
+	}
+}
+
+func handleServerConn(rawConn net.Conn, cfg *config.Config, table *sudoku.Table, mgr *hybrid.Manager) {
+	// Use Tunnel Abstraction for Handshake and Upgrade
+	tunnelConn, err := tunnel.HandshakeAndUpgrade(rawConn, cfg, table, mgr)
+	if err != nil {
+		if suspErr, ok := err.(*tunnel.SuspiciousError); ok {
+			log.Printf("[Security] Suspicious connection: %v", suspErr.Err)
+			handler.HandleSuspicious(suspErr.Conn, rawConn, cfg)
+		} else {
+			log.Printf("[Server] Handshake failed: %v", err)
+			rawConn.Close()
+		}
+		return
+	}
+
+	// ==========================================
+	// 5. 连接目标地址
+	// ==========================================
+
+	// 从上行连接读取目标地址
+	destAddrStr, _, _, err := protocol.ReadAddress(tunnelConn)
+	if err != nil {
+		log.Printf("[Server] Failed to read target address: %v", err)
+		return
+	}
+
+	log.Printf("[Server] Connecting to %s", destAddrStr)
+
+	target, err := net.DialTimeout("tcp", destAddrStr, 10*time.Second)
+	if err != nil {
+		log.Printf("[Server] Connect target failed: %v", err)
+		return
+	}
+
+	// ==========================================
+	// 6. 转发数据
+	// ==========================================
+	pipeConn(tunnelConn, target)
+}
