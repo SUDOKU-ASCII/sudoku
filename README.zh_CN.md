@@ -126,6 +126,7 @@ Split Private Key: 89acb9663cfd3bd04adf0001cc7000a8eb312903088b33a847d7e5cf102f1
 ## 鸣谢
 
 - [链接1](https://gfw.report/publications/usenixsecurity23/zh/)
+- [链接2](https://github.com/enfein/mieru/issues/8)
 - [链接3](https://github.com/zhaohuabing/lightsocks)
 - [链接4](https://imciel.com/2020/08/27/create-custom-tunnel/)
 - [链接5](https://oeis.org/A109252)

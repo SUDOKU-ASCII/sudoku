@@ -128,6 +128,7 @@ Run the program specifying the `config.json` path as an argument:
 ## Acknowledgements
 
 - [Link 1](https://gfw.report/publications/usenixsecurity23/zh/)
+- [Link 2](https://github.com/enfein/mieru/issues/8)
 - [Link 3](https://github.com/zhaohuabing/lightsocks)
 - [Link 4](https://imciel.com/2020/08/27/create-custom-tunnel/)
 - [Link 5](https://oeis.org/A109252)
