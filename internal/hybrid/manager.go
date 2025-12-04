@@ -83,6 +83,10 @@ func (s *SplitConn) Close() error {
 
 // Manager 管理 Mieru 实例和会话配对
 type Manager struct {
+	// =========================================================================
+	// = DEPRECATION NOTICE: Mieru split tunnel is marked for removal soon.    =
+	// = Keep changes minimal; prefer the high-bandwidth downlink codec.      =
+	// =========================================================================
 	cfg      *config.Config
 	mieruCli mieruClient.Client
 	mieruSrv mieruServer.Server

@@ -20,6 +20,7 @@ with this application without prior consent.
 package apis
 
 import (
+	"errors"
 	"fmt"
 	"net"
 )
@@ -67,3 +68,6 @@ func (e *HandshakeError) Error() string {
 func (e *HandshakeError) Unwrap() error {
 	return e.Err
 }
+
+// ErrUoTRequested 表示客户端请求进入 UDP-over-TCP 模式。
+var ErrUoTRequested = errors.New("uot session requested; switch to UDP handler")

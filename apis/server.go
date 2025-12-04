@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/saba-futai/sudoku/internal/tunnel"
 	"github.com/saba-futai/sudoku/pkg/crypto"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
@@ -59,11 +60,24 @@ func (bc *bufferedConn) Read(p []byte) (int, error) {
 //
 // 任何层次失败都会返回 HandshakeError，其中包含该层及之前所有层读取的数据
 func ServerHandshake(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, error) {
+	conn, target, isUoT, err := ServerHandshakeWithUoT(rawConn, cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	if isUoT {
+		conn.Close()
+		return nil, "", ErrUoTRequested
+	}
+	return conn, target, nil
+}
+
+// ServerHandshakeWithUoT 执行握手，同时识别 UoT 会话（返回 isUoT=true）。
+func ServerHandshakeWithUoT(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, bool, error) {
 	if cfg == nil {
-		return nil, "", fmt.Errorf("config is required")
+		return nil, "", false, fmt.Errorf("config is required")
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, "", fmt.Errorf("invalid config: %w", err)
+		return nil, "", false, fmt.Errorf("invalid config: %w", err)
 	}
 
 	// 设置握手总超时，防止慢速攻击占用资源
@@ -98,7 +112,7 @@ func ServerHandshake(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, e
 			// HTTP 头都不对，直接返回错误，此时还没进入 Sudoku 层
 			// 这里的错误通常意味着非 HTTP 流量或格式错误
 			rawConn.SetReadDeadline(time.Time{})
-			return nil, "", &HandshakeError{
+			return nil, "", false, &HandshakeError{
 				Err:            fmt.Errorf("invalid http header: %w", err),
 				RawConn:        rawConn,
 				HTTPHeaderData: httpHeaderData,
@@ -117,10 +131,10 @@ func ServerHandshake(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, e
 	sConn := sudoku.NewConn(bConn, cfg.Table, cfg.PaddingMin, cfg.PaddingMax, true)
 
 	// 定义一个清理函数，用于在失败时关闭连接并返回特定错误
-	fail := func(originalErr error) (net.Conn, string, error) {
+	fail := func(originalErr error) (net.Conn, string, bool, error) {
 		rawConn.SetReadDeadline(time.Time{})
 		badData := sConn.GetBufferedAndRecorded() // 获取所有已读取的字节
-		return nil, "", &HandshakeError{
+		return nil, "", false, &HandshakeError{
 			Err:            originalErr,
 			RawConn:        rawConn,
 			HTTPHeaderData: httpHeaderData,
@@ -154,8 +168,55 @@ func ServerHandshake(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, e
 	// 握手成功，停止录制数据，释放内存
 	sConn.StopRecording()
 
+	managed := tunnel.NewManagedConn(cConn, sConn)
+	baseConn := net.Conn(managed)
+
+	if cfg.EnableDownlinkBoost && managed.BoostSupported() {
+		controlKey := tunnel.DeriveControlKey(cfg.Key)
+		aesKey := tunnel.DeriveBoostAESKey(cfg.Key)
+		boosted := false
+		var ctrl *tunnel.ControlConn
+
+		handler := func(cmd byte, payload []byte) {
+			if cmd != tunnel.ControlCmdBoostRequest || boosted {
+				return
+			}
+			if len(payload) < 17 {
+				return
+			}
+			targetASCII := payload[0] == 0
+			iv := payload[1:]
+			if len(iv) < 16 {
+				return
+			}
+			if err := managed.EnableBoost(true, false, aesKey, iv[:16], targetASCII); err != nil {
+				return
+			}
+			if err := ctrl.SendControl(tunnel.ControlCmdBoostAck, payload); err != nil {
+				return
+			}
+			boosted = true
+		}
+
+		ctrl = tunnel.NewControlConn(baseConn, controlKey, handler, nil)
+		baseConn = ctrl
+	}
+
+	firstByte := make([]byte, 1)
+	if _, err := io.ReadFull(baseConn, firstByte); err != nil {
+		cConn.Close()
+		return fail(fmt.Errorf("read first byte failed: %w", err))
+	}
+
+	if firstByte[0] == tunnel.UoTMagicByte {
+		rawConn.SetReadDeadline(time.Time{})
+		return baseConn, "", true, nil
+	}
+
+	prefixed := tunnel.NewPreBufferedConn(baseConn, firstByte)
+
 	// 4. 读取目标地址
-	targetAddr, _, _, err := protocol.ReadAddress(cConn)
+	targetAddr, _, _, err := protocol.ReadAddress(prefixed)
 	if err != nil {
 		cConn.Close()
 		return fail(fmt.Errorf("read target address failed: %w", err))
@@ -164,7 +225,7 @@ func ServerHandshake(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, e
 	// 握手全部完成，取消超时限制
 	rawConn.SetReadDeadline(time.Time{})
 
-	return cConn, targetAddr, nil
+	return prefixed, targetAddr, false, nil
 }
 
 func abs(x int64) int64 {

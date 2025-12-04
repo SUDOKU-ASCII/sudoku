@@ -56,4 +56,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.AEADMethod == "" || cfg.PaddingMin == 0 || cfg.PaddingMax == 0 {
 		t.Fatalf("defaults not set")
 	}
+	if !cfg.EnableDownlinkBoost {
+		t.Fatalf("downlink boost should default to enabled")
+	}
 }

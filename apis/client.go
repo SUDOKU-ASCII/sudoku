@@ -21,6 +21,7 @@ package apis
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/saba-futai/sudoku/internal/tunnel"
 	"github.com/saba-futai/sudoku/pkg/crypto"
 	"github.com/saba-futai/sudoku/pkg/dnsutil"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
@@ -91,7 +93,7 @@ func buildHandshakePayload(key string) [16]byte {
 	return payload
 }
 
-func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, error) {
+func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig) (*tunnel.ManagedConn, error) {
 	sConn := sudoku.NewConn(rawConn, cfg.Table, cfg.PaddingMin, cfg.PaddingMax, false)
 	seed := cfg.Key
 	if recoveredFromKey, err := crypto.RecoverPublicKey(cfg.Key); err == nil {
@@ -102,7 +104,7 @@ func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, error) {
 		rawConn.Close()
 		return nil, fmt.Errorf("setup crypto failed: %w", err)
 	}
-	return cConn, nil
+	return tunnel.NewManagedConn(cConn, sConn), nil
 }
 
 func Dial(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
@@ -165,6 +167,129 @@ func Dial(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
 		return nil, fmt.Errorf("send target address failed: %w", err)
 	}
 
+	var outConn net.Conn = cConn
+	if cfg.EnableDownlinkBoost {
+		outConn = wrapAPIBoost(outConn, cConn, cfg)
+	}
+
 	success = true
-	return cConn, nil
+	return outConn, nil
+}
+
+// DialUoT 建立一条支持 UDP-over-TCP 的隧道，返回可靠传输通道。
+func DialUoT(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+	if cfg.ServerAddress == "" {
+		return nil, fmt.Errorf("ServerAddress cannot be empty")
+	}
+
+	resolvedAddr, err := dnsutil.ResolveWithCache(ctx, cfg.ServerAddress)
+	if err != nil {
+		return nil, fmt.Errorf("resolve server address failed: %w", err)
+	}
+
+	var d net.Dialer
+	rawConn, err := d.DialContext(ctx, "tcp", resolvedAddr)
+	if err != nil {
+		return nil, fmt.Errorf("dial tcp failed: %w", err)
+	}
+
+	success := false
+	defer func() {
+		if !success {
+			rawConn.Close()
+		}
+	}()
+
+	if !cfg.DisableHTTPMask {
+		if err := httpmask.WriteRandomRequestHeader(rawConn, cfg.ServerAddress); err != nil {
+			return nil, fmt.Errorf("write http mask failed: %w", err)
+		}
+	}
+
+	cConn, err := wrapClientConn(rawConn, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	handshake := buildHandshakePayload(cfg.Key)
+	if _, err := cConn.Write(handshake[:]); err != nil {
+		cConn.Close()
+		return nil, fmt.Errorf("send handshake failed: %w", err)
+	}
+
+	if err := tunnel.WriteUoTPreface(cConn); err != nil {
+		cConn.Close()
+		return nil, fmt.Errorf("uot preface failed: %w", err)
+	}
+
+	var outConn net.Conn = cConn
+	if cfg.EnableDownlinkBoost {
+		outConn = wrapAPIBoost(outConn, cConn, cfg)
+	}
+
+	success = true
+	return outConn, nil
+}
+
+func wrapAPIBoost(conn net.Conn, managed *tunnel.ManagedConn, cfg *ProtocolConfig) net.Conn {
+	if managed == nil || !managed.BoostSupported() || cfg == nil || !cfg.EnableDownlinkBoost {
+		return conn
+	}
+
+	isASCII := cfg.Table != nil && cfg.Table.IsASCII
+	controlKey := tunnel.DeriveControlKey(cfg.Key)
+	aesKey := tunnel.DeriveBoostAESKey(cfg.Key)
+	monitor := tunnel.NewBandwidthMonitor(12*1024*1024, 5*time.Second)
+
+	var requested bool
+	var activated bool
+	var ctrl *tunnel.ControlConn
+
+	handler := func(cmd byte, payload []byte) {
+		if cmd != tunnel.ControlCmdBoostAck || activated {
+			return
+		}
+		if len(payload) < 17 {
+			return
+		}
+		targetASCII := payload[0] == 0
+		iv := payload[1:]
+		if len(iv) < 16 {
+			return
+		}
+		if err := managed.EnableBoost(false, true, aesKey, iv[:16], targetASCII); err != nil {
+			return
+		}
+		activated = true
+	}
+
+	dataCb := func(n int) {
+		trigger := monitor.Add(n)
+		if activated || requested {
+			return
+		}
+		if trigger {
+			iv := make([]byte, 16)
+			if _, err := rand.Read(iv); err != nil {
+				return
+			}
+			modeByte := byte(1)
+			if isASCII {
+				modeByte = 0
+			}
+			payload := append([]byte{modeByte}, iv...)
+			if err := ctrl.SendControl(tunnel.ControlCmdBoostRequest, payload); err == nil {
+				requested = true
+			}
+		}
+	}
+
+	ctrl = tunnel.NewControlConn(conn, controlKey, handler, dataCb)
+	return ctrl
 }

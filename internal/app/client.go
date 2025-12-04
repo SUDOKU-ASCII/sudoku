@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -111,6 +112,9 @@ func RunClient(cfg *config.Config, table *sudoku.Table) {
 	}
 
 	if cfg.EnableMieru {
+		// =========================================================================
+		// = DEPRECATION NOTICE: Mieru split mode is marked for removal soon.     =
+		// =========================================================================
 		mgr := hybrid.GetInstance(cfg)
 		if err := mgr.StartMieruClient(); err != nil {
 			log.Fatalf("Failed to start Mieru Client: %v", err)
@@ -247,6 +251,8 @@ func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, dialer tunnel.D
 		ctrl.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
+
+	uotConn = wrapBoostIfNeeded(uotConn, cfg)
 
 	reply := buildUDPAssociateReply(udpConn)
 	if _, err := ctrl.Write(reply); err != nil {
@@ -608,7 +614,7 @@ func dialTarget(destAddrStr string, destIP net.IP, cfg *config.Config, geoMgr *g
 			log.Printf("[Proxy] Dial Failed: %v", err)
 			return nil, false
 		}
-		return conn, true
+		return wrapBoostIfNeeded(conn, cfg), true
 	} else {
 		// 直连模式
 		dConn, err := net.DialTimeout("tcp", destAddrStr, 5*time.Second)
@@ -618,4 +624,72 @@ func dialTarget(destAddrStr string, destIP net.IP, cfg *config.Config, geoMgr *g
 		}
 		return dConn, true
 	}
+}
+
+func wrapBoostIfNeeded(conn net.Conn, cfg *config.Config) net.Conn {
+	if cfg.EnableMieru {
+		return conn
+	}
+
+	managed, ok := tunnel.ExtractManagedConn(conn)
+	if !ok || !managed.BoostSupported() {
+		return conn
+	}
+
+	controlKey := tunnel.DeriveControlKey(cfg.Key)
+	aesKey := tunnel.DeriveBoostAESKey(cfg.Key)
+	isASCII := strings.ToLower(cfg.ASCII) == "prefer_ascii"
+	monitor := tunnel.NewBandwidthMonitor(12*1024*1024, 5*time.Second)
+
+	var requested bool
+	var activated bool
+	var ctrl *tunnel.ControlConn
+
+	handler := func(cmd byte, payload []byte) {
+		if cmd != tunnel.ControlCmdBoostAck || activated {
+			return
+		}
+		if len(payload) < 17 {
+			return
+		}
+		targetASCII := payload[0] == 0
+		iv := payload[1:]
+		if len(iv) < 16 {
+			return
+		}
+		if err := managed.EnableBoost(false, true, aesKey, iv[:16], targetASCII); err != nil {
+			log.Printf("[HB] enable downlink boost failed: %v", err)
+			return
+		}
+		activated = true
+		log.Printf("[HB] Downlink boost activated")
+	}
+
+	dataCb := func(n int) {
+		if monitor == nil {
+			return
+		}
+		trigger := monitor.Add(n)
+		if activated || requested {
+			return
+		}
+		if trigger {
+			iv := make([]byte, 16)
+			if _, err := rand.Read(iv); err != nil {
+				return
+			}
+			modeByte := byte(1)
+			if isASCII {
+				modeByte = 0
+			}
+			payload := append([]byte{modeByte}, iv...)
+			if err := ctrl.SendControl(tunnel.ControlCmdBoostRequest, payload); err == nil {
+				requested = true
+				log.Printf("[HB] Requested downlink boost")
+			}
+		}
+	}
+
+	ctrl = tunnel.NewControlConn(conn, controlKey, handler, dataCb)
+	return ctrl
 }

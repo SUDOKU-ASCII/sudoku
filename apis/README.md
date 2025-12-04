@@ -1,6 +1,6 @@
 # Sudoku API (Standard)
 
-面向其他开发者开放的纯 Sudoku 协议 API：HTTP 伪装 + 数独 ASCII/Entropy 混淆 + AEAD 加密。**不包含 hybrid/Mieru 的上下行分离逻辑**，方便直接嵌入其他项目。
+面向其他开发者开放的纯 Sudoku 协议 API：HTTP 伪装 + 数独 ASCII/Entropy 混淆 + AEAD 加密，支持自动下行提速与 UoT (UDP over TCP)。**旧版 hybrid/Mieru 分离逻辑已标记弃用，不再推荐接入。**
 
 ## 安装
 - 推荐指定已有 tag：`go get github.com/saba-futai/sudoku@v0.1.0`
@@ -13,6 +13,8 @@
 - 填充：`PaddingMin`/`PaddingMax` 为 0-100 的概率百分比。
 - 客户端：设置 `ServerAddress`、`TargetAddress`。
 - 服务端：可设置 `HandshakeTimeoutSeconds` 限制握手耗时。
+- 下行提速：`EnableDownlinkBoost` 默认开启，5 秒内真实下行超过 12MB 时自动协商切换高带宽下行编码。
+- UDP：`DialUoT` / `ServerHandshakeWithUoT` 提供 UoT 支持。
 
 ## 客户端示例
 ```go
@@ -112,4 +114,5 @@ func main() {
 ## 说明
 - `DefaultConfig()` 提供合理默认值，仍需设置 `Key`、`Table` 及对应的地址字段。
 - 服务端如需回落（HTTP/原始 TCP），可从 `HandshakeError` 取出 `HTTPHeaderData` 与 `ReadData` 按顺序重放。
-- 需要 hybrid/Mieru 上下行分离时请继续使用项目内置 CLI；该 API 仅覆盖标准单通道模式。
+- 需要 hybrid/Mieru 上下行分离时请继续使用项目内置 CLI；该 API 仅覆盖标准单通道模式，且 Mieru 已进入弃用周期。
+- UDP-over-TCP：使用 `DialUoT` 与 `ServerHandshakeWithUoT` 组合，可直接在隧道内传输 UDP 数据报。

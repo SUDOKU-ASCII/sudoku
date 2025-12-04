@@ -18,6 +18,10 @@ import (
 
 func RunServer(cfg *config.Config, table *sudoku.Table) {
 	// 1. 启动 Mieru 服务 (Split 模式专用)
+	// =========================================================================
+	// = DEPRECATION NOTICE: Mieru split mode will be removed in a future    =
+	// = release. Prefer the built-in high-bandwidth downlink codec.        =
+	// =========================================================================
 	mgr := hybrid.GetInstance(cfg)
 	if err := mgr.StartMieruServer(); err != nil {
 		log.Fatalf("Failed to start Mieru Server: %v", err)
@@ -56,6 +60,41 @@ func handleServerConn(rawConn net.Conn, cfg *config.Config, table *sudoku.Table,
 	// ==========================================
 	// 5. 连接目标地址
 	// ==========================================
+
+	managed, ok := tunnel.ExtractManagedConn(tunnelConn)
+	if ok && managed.BoostSupported() && !cfg.EnableMieru {
+		controlKey := tunnel.DeriveControlKey(cfg.Key)
+		aesKey := tunnel.DeriveBoostAESKey(cfg.Key)
+		boosted := false
+		var ctrl *tunnel.ControlConn
+
+		handler := func(cmd byte, payload []byte) {
+			if cmd != tunnel.ControlCmdBoostRequest || boosted {
+				return
+			}
+			if len(payload) < 17 {
+				return
+			}
+			targetASCII := payload[0] == 0
+			iv := payload[1:]
+			if len(iv) < 16 {
+				return
+			}
+			if err := ctrl.SendControl(tunnel.ControlCmdBoostAck, payload); err != nil {
+				log.Printf("[HB][Server] send ack failed: %v", err)
+				return
+			}
+			if err := managed.EnableBoost(true, false, aesKey, iv[:16], targetASCII); err != nil {
+				log.Printf("[HB][Server] enable downlink boost failed: %v", err)
+				return
+			}
+			boosted = true
+			log.Printf("[HB][Server] Downlink boost enabled")
+		}
+
+		ctrl = tunnel.NewControlConn(tunnelConn, controlKey, handler, nil)
+		tunnelConn = ctrl
+	}
 
 	// 判断是否为 UoT (UDP over TCP) 会话
 	firstByte := make([]byte, 1)

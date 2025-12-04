@@ -4,9 +4,12 @@ package sudoku
 import (
 	"bufio"
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	crypto_rand "crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net"
 	"sync"
@@ -28,6 +31,18 @@ type Conn struct {
 
 	rng         *rand.Rand
 	paddingRate float32
+
+	// High bandwidth (downlink) mode
+	boostWrite bool
+	boostRead  bool
+	boostASCII bool
+	boostEnc   cipher.Stream
+	boostDec   cipher.Stream
+	encBitBuf  uint64
+	encBits    int
+	decBitBuf  uint64
+	decBits    int
+	boostMu    sync.Mutex
 }
 
 func NewConn(c net.Conn, table *Table, pMin, pMax int, record bool) *Conn {
@@ -57,6 +72,52 @@ func NewConn(c net.Conn, table *Table, pMin, pMax int, record bool) *Conn {
 		sc.recording = true
 	}
 	return sc
+}
+
+// EnableBoost activates the high-bandwidth downlink codec.
+// write/read toggles control which direction uses the codec on this side.
+func (sc *Conn) EnableBoost(write, read bool, aesKey, iv []byte, isASCII bool) error {
+	if len(aesKey) < 16 {
+		return fmt.Errorf("aesKey too short")
+	}
+	if len(iv) < aes.BlockSize {
+		return fmt.Errorf("iv too short")
+	}
+
+	block, err := aes.NewCipher(aesKey[:aes.BlockSize])
+	if err != nil {
+		return err
+	}
+
+	if write {
+		sc.boostMu.Lock()
+		sc.boostEnc = cipher.NewCTR(block, iv[:aes.BlockSize])
+		sc.encBitBuf = 0
+		sc.encBits = 0
+		sc.boostWrite = true
+		sc.boostASCII = isASCII
+		sc.boostMu.Unlock()
+	}
+	if read {
+		sc.boostDec = cipher.NewCTR(block, iv[:aes.BlockSize])
+		sc.decBitBuf = 0
+		sc.decBits = 0
+		sc.boostRead = true
+		sc.boostASCII = isASCII
+		// Reset pending hint buffers to avoid mixing modes.
+		sc.hintBuf = sc.hintBuf[:0]
+	}
+	return nil
+}
+
+func (sc *Conn) Close() error {
+	if sc.boostWrite {
+		_ = sc.flushBoostPadding()
+	}
+	if sc.Conn == nil {
+		return nil
+	}
+	return sc.Conn.Close()
 }
 
 func (sc *Conn) StopRecording() {
@@ -95,6 +156,10 @@ func (sc *Conn) Write(p []byte) (n int, err error) {
 		return 0, nil
 	}
 
+	if sc.boostWrite {
+		return sc.writeBoost(p)
+	}
+
 	outCapacity := len(p) * 6
 	out := make([]byte, 0, outCapacity)
 	pads := sc.table.PaddingPool
@@ -129,6 +194,10 @@ func (sc *Conn) Write(p []byte) (n int, err error) {
 }
 
 func (sc *Conn) Read(p []byte) (n int, err error) {
+	if sc.boostRead {
+		return sc.readBoost(p)
+	}
+
 	if len(sc.pendingData) > 0 {
 		n = copy(p, sc.pendingData)
 		if n == len(sc.pendingData) {
@@ -203,4 +272,179 @@ func (sc *Conn) Read(p []byte) (n int, err error) {
 		sc.pendingData = sc.pendingData[n:]
 	}
 	return n, nil
+}
+
+func (sc *Conn) packBoostByte(bits byte) byte {
+	if sc.boostASCII {
+		return 0x40 | (bits & 0x3F)
+	}
+	high := (bits & 0x30) << 1
+	low := bits & 0x0F
+	return high | low
+}
+
+func (sc *Conn) unpackBoostByte(b byte) byte {
+	if sc.boostASCII {
+		return b & 0x3F
+	}
+	return ((b & 0x60) >> 1) | (b & 0x0F)
+}
+
+func (sc *Conn) writeBoost(p []byte) (int, error) {
+	if sc.boostEnc == nil {
+		return 0, errors.New("boost encoder not initialized")
+	}
+
+	encBuf := make([]byte, len(p))
+	sc.boostEnc.XORKeyStream(encBuf, p)
+
+	pads := sc.table.PaddingPool
+	padLen := len(pads)
+
+	out := make([]byte, 0, len(p)*2)
+
+	sc.boostMu.Lock()
+	for _, b := range encBuf {
+		sc.encBitBuf = (sc.encBitBuf << 8) | uint64(b)
+		sc.encBits += 8
+
+		for sc.encBits >= 6 {
+			sc.encBits -= 6
+			chunk := byte(sc.encBitBuf>>sc.encBits) & 0x3F
+			encoded := sc.packBoostByte(chunk)
+
+			if sc.rng.Float32() < sc.paddingRate {
+				out = append(out, pads[sc.rng.Intn(padLen)])
+			}
+			out = append(out, encoded)
+
+			if sc.encBits == 0 {
+				sc.encBitBuf = 0
+			} else {
+				sc.encBitBuf = sc.encBitBuf & ((1 << sc.encBits) - 1)
+			}
+		}
+	}
+	sc.boostMu.Unlock()
+
+	if sc.rng.Float32() < sc.paddingRate {
+		out = append(out, pads[sc.rng.Intn(padLen)])
+	}
+
+	_, err := sc.Conn.Write(out)
+	return len(p), err
+}
+
+func (sc *Conn) readBoost(p []byte) (int, error) {
+	if len(sc.pendingData) > 0 {
+		n := copy(p, sc.pendingData)
+		if n == len(sc.pendingData) {
+			sc.pendingData = sc.pendingData[:0]
+		} else {
+			sc.pendingData = sc.pendingData[n:]
+		}
+		return n, nil
+	}
+
+	for {
+		if len(sc.pendingData) > 0 {
+			break
+		}
+
+		nr, rErr := sc.reader.Read(sc.rawBuf)
+		if nr > 0 {
+			chunk := sc.rawBuf[:nr]
+			sc.recordLock.Lock()
+			if sc.recording {
+				sc.recorder.Write(chunk)
+			}
+			sc.recordLock.Unlock()
+
+			for _, b := range chunk {
+				isPadding := false
+
+				if sc.boostASCII {
+					if (b & 0x40) == 0 {
+						isPadding = true
+					}
+				} else {
+					if (b & 0x90) != 0 {
+						isPadding = true
+					}
+				}
+
+				if isPadding {
+					continue
+				}
+
+				chunkBits := sc.unpackBoostByte(b)
+				sc.decBitBuf = (sc.decBitBuf << 6) | uint64(chunkBits)
+				sc.decBits += 6
+
+				for sc.decBits >= 8 {
+					sc.decBits -= 8
+					byteVal := byte(sc.decBitBuf >> sc.decBits)
+					if sc.decBits == 0 {
+						sc.decBitBuf = 0
+					} else {
+						sc.decBitBuf = sc.decBitBuf & ((1 << sc.decBits) - 1)
+					}
+
+					tmp := []byte{byteVal}
+					if sc.boostDec == nil {
+						return 0, errors.New("boost decoder missing")
+					}
+					sc.boostDec.XORKeyStream(tmp, tmp)
+					sc.pendingData = append(sc.pendingData, tmp[0])
+				}
+			}
+		}
+
+		if rErr != nil {
+			return 0, rErr
+		}
+		if len(sc.pendingData) > 0 {
+			break
+		}
+	}
+
+	n := copy(p, sc.pendingData)
+	if n == len(sc.pendingData) {
+		sc.pendingData = sc.pendingData[:0]
+	} else {
+		sc.pendingData = sc.pendingData[n:]
+	}
+	return n, nil
+}
+
+// flushBoostPadding emits leftover bits (zero padded) to finish the stream.
+func (sc *Conn) flushBoostPadding() error {
+	sc.boostMu.Lock()
+	defer sc.boostMu.Unlock()
+
+	if !sc.boostWrite || sc.encBits == 0 {
+		return nil
+	}
+
+	pads := sc.table.PaddingPool
+	padLen := len(pads)
+
+	remaining := byte((sc.encBitBuf << (6 - sc.encBits)) & 0x3F)
+	encoded := sc.packBoostByte(remaining)
+
+	out := make([]byte, 0, 2)
+	if sc.rng.Float32() < sc.paddingRate {
+		out = append(out, pads[sc.rng.Intn(padLen)])
+	}
+	out = append(out, encoded)
+
+	if sc.rng.Float32() < sc.paddingRate {
+		out = append(out, pads[sc.rng.Intn(padLen)])
+	}
+
+	sc.encBitBuf = 0
+	sc.encBits = 0
+
+	_, err := sc.Conn.Write(out)
+	return err
 }

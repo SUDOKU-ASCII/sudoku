@@ -91,6 +91,10 @@ type ProtocolConfig struct {
 	// 如果为 true，客户端不发送伪装头，服务端也不检测伪装头
 	// 注意：服务端支持自动检测，即使此项为 false，也能处理不带伪装头的客户端（前提是首字节不匹配 POST）
 	DisableHTTPMask bool
+
+	// EnableDownlinkBoost 是否自动在高带宽场景切换到下行高带宽编码
+	// 当 5 秒内有效下行超过 12MB 且仍有后续流量时自动发起协商。
+	EnableDownlinkBoost bool
 }
 
 // Validate 验证配置的有效性
@@ -152,5 +156,6 @@ func DefaultConfig() *ProtocolConfig {
 		PaddingMin:              10,
 		PaddingMax:              30,
 		HandshakeTimeoutSeconds: 5,
+		EnableDownlinkBoost:     true,
 	}
 }

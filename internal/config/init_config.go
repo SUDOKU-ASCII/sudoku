@@ -47,6 +47,10 @@ func Load(path string) (*Config, error) {
 }
 
 func InitMieruconfig(cfg *Config) {
+	// =========================================================================
+	// = DEPRECATION NOTICE: Mieru split tunnel will be removed soon.         =
+	// = This initializer is retained for backward compatibility only.        =
+	// =========================================================================
 	if !cfg.EnableMieru {
 		return
 	}

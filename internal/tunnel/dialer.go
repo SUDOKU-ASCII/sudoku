@@ -89,7 +89,7 @@ func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, pri
 		return nil, fmt.Errorf("handshake failed: %w", err)
 	}
 
-	return cConn, nil
+	return NewManagedConn(cConn, sConn), nil
 }
 
 func (d *BaseDialer) dialUoT() (net.Conn, error) {

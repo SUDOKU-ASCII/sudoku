@@ -40,26 +40,8 @@ Unlike traditional random noise obfuscation, this protocol uses various masking 
 
 ---
 
-### Uplink/Downlink Separation
-#### —— Attempting to solve downlink bandwidth issues using the API provided by [mieru](https://github.com/enfein/mieru/tree/main)
-> Special thanks to the developers of [mieru](https://github.com/enfein/mieru/tree/main)
-
-Since the Sudoku protocol's encapsulation of streams leads to increased packet size, bandwidth limitations may occur in streaming and download scenarios (theoretically, 200mbps symmetric uplink/downlink on local and VPS ends should not cause bottlenecks). Therefore, the `mieru` protocol, which is also a non-TLS solution, is adopted as an (optional) downlink protocol.
-
-#### mieru Configuration
-```json
-"enable_mieru": true,
-"mieru_config": {
-    "port": 20123,
-    "transport": "TCP",
-    "mtu": 1400,
-    "multiplexing": "HIGH"
-}
-```
-**Explanation**: When `enable_mieru` is enabled but the `"mieru_config"` field is not configured, it defaults to using the UDP protocol on the same port as Sudoku. When `"enable_mieru"` is `true`, uplink/downlink separation is enabled; when `false`, the `"mieru_config"` field can be ignored. The mandatory field in `"mieru_config"` is `port`, specifying the downlink port; other configurations can be deleted directly.
-
-
-**Note**: It is currently uncertain whether the traffic characteristics resulting from this configuration will be censored, so it is tentatively listed as an `Experimental Feature`.
+### Downlink Boost (Mieru deprecated)
+**Legacy Mieru split tunnels are marked for removal soon.** Heavy downlink flows now auto-negotiate a boost when more than 12MB is delivered within 5 seconds and traffic continues. Uplink stays on classic Sudoku; downlink switches to an AES-CTR stream that is re-packed into the existing ASCII/entropy masks (padding is still honored), keeping the connection uninterrupted while lifting throughput.
 
 ### Security & Encryption
 Beneath the obfuscation layer, the protocol optionally employs AEAD to protect data integrity and confidentiality.
@@ -71,8 +53,8 @@ When the server detects illegal handshake requests, timed-out connections, or ma
 
 ### Drawbacks (TODO)
 1.  **Packet Format**: TCP native; UDP is supported via UoT (UDP-over-TCP) without exposing a raw UDP listener.
-2.  **Bandwidth Utilization**: Less than 30%. It is recommended for users with high-quality lines or high bandwidth. Additionally, it is recommended for VPN service providers ("Airport owners"), as it can effectively increase user traffic usage stats.
-3.  **Client Proxy**: Only supports SOCKS5/HTTP.
+2.  **Downlink Boost**: Heavy flows switch codecs automatically; legacy Mieru split mode is deprecated.
+3.  **Client Proxy**: Only supports SOCKS5/HTTP (plus UDP over TCP for SOCKS5 UDP).
 4.  **Protocol Popularity**: Currently only official and mihomo support, no compatibility with other cores.
 
 

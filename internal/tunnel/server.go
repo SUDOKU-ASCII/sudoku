@@ -211,7 +211,7 @@ func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Tab
 			return nil, fmt.Errorf("read bind magic failed: %w", err)
 		}
 
-		return &hybrid.SplitConn{
+		return NewManagedConn(&hybrid.SplitConn{
 			Conn:   cConn, // Base conn
 			Reader: cConn,
 			Writer: mConn,
@@ -223,12 +223,12 @@ func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Tab
 				}
 				return e2
 			},
-		}, nil
+		}, nil), nil
 
 	} else {
 		// Standard Mode
 		// Put back magic byte
-		return &PreBufferedConn{Conn: cConn, buf: magicBuf}, nil
+		return &PreBufferedConn{Conn: NewManagedConn(cConn, sConn), buf: magicBuf}, nil
 	}
 }
 

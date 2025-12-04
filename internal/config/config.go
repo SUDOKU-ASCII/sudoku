@@ -2,22 +2,27 @@
 package config
 
 type Config struct {
-	Mode             string       `json:"mode"`      // "client" or "server"
-	Transport        string       `json:"transport"` // "tcp" or "udp"
-	LocalPort        int          `json:"local_port"`
-	ServerAddress    string       `json:"server_address"`
-	FallbackAddr     string       `json:"fallback_address"`
-	Key              string       `json:"key"`
-	AEAD             string       `json:"aead"`              // "aes-128-gcm", "chacha20-poly1305", "none"
-	SuspiciousAction string       `json:"suspicious_action"` // "fallback" or "silent"
-	PaddingMin       int          `json:"padding_min"`
-	PaddingMax       int          `json:"padding_max"`
-	RuleURLs         []string     `json:"rule_urls"`    // 留空则使用默认，支持 "global", "direct" 关键字
-	ProxyMode        string       `json:"proxy_mode"`   // 运行时状态，非JSON字段，由Load解析逻辑填充
-	ASCII            string       `json:"ascii"`        // "prefer_entropy" (默认): 低熵, "prefer_ascii": 纯ASCII字符，高熵
-	EnableMieru      bool         `json:"enable_mieru"` // 开启上下行分离
-	MieruConfig      *MieruConfig `json:"mieru_config"` // Mieru 特定配置
-	DisableHTTPMask  bool         `json:"disable_http_mask"`
+	Mode             string   `json:"mode"`      // "client" or "server"
+	Transport        string   `json:"transport"` // "tcp" or "udp"
+	LocalPort        int      `json:"local_port"`
+	ServerAddress    string   `json:"server_address"`
+	FallbackAddr     string   `json:"fallback_address"`
+	Key              string   `json:"key"`
+	AEAD             string   `json:"aead"`              // "aes-128-gcm", "chacha20-poly1305", "none"
+	SuspiciousAction string   `json:"suspicious_action"` // "fallback" or "silent"
+	PaddingMin       int      `json:"padding_min"`
+	PaddingMax       int      `json:"padding_max"`
+	RuleURLs         []string `json:"rule_urls"`  // 留空则使用默认，支持 "global", "direct" 关键字
+	ProxyMode        string   `json:"proxy_mode"` // 运行时状态，非JSON字段，由Load解析逻辑填充
+	ASCII            string   `json:"ascii"`      // "prefer_entropy" (默认): 低熵, "prefer_ascii": 纯ASCII字符，高熵
+	// =========================================================================
+	// = DEPRECATION NOTICE: Mieru split tunnel is scheduled for removal soon. =
+	// = Do not add new dependencies here; migrations should target the new    =
+	// = high-bandwidth downlink codec instead.                                =
+	// =========================================================================
+	EnableMieru     bool         `json:"enable_mieru"` // 开启上下行分离（即将弃用）
+	MieruConfig     *MieruConfig `json:"mieru_config"` // Mieru 特定配置（即将弃用）
+	DisableHTTPMask bool         `json:"disable_http_mask"`
 }
 
 type MieruConfig struct {

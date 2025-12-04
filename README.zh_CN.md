@@ -34,25 +34,8 @@
 
 ---
 
-### 上下行分离
-#### ——基于[mieru](https://github.com/enfein/mieru/tree/main)提供的API的下行带宽解决尝试
-> 在此特别感谢[mieru](https://github.com/enfein/mieru/tree/main)的开发者
-
-由于sudoku协议对流的封装会导致包增大，对于流媒体和下载场景，可能出现带宽受限的问题（理论本地与VPS各有200mbps上下行不会出现瓶颈），因此采用同样为非TLS方案的mieru协议作(可选的)下行协议。
-#### mieru配置
-```json
-"enable_mieru": true,
-"mieru_config": {
-    "port": 20123,
-    "transport": "TCP",
-    "mtu": 1400,
-    "multiplexing": "HIGH"
-}
-```
-**解释**：当仅开启`enable_mieru`但不配置`"mieru_config"`字段时，默认使用sudoku同端口的UDP协议。`"enable_mieru"`为`true`时即开启上下行分离，为`false`时可忽略`"mieru_config"`字段。`"mieru_config"`字段中必填项为`port`，指定下行端口，其他配置可直接删除。
-
-
-**注意**：目前尚不确定这种配置方法带来的流量特征是否会被审查，暂列为`实验性功能`。
+### 下行加速（Mieru 即将弃用）
+**旧的 Mieru 上下行分离仅为兼容而保留，将在后续版本移除。** 现在当 5 秒内下行累计超过 12MB 且仍有后续流量时，客户端与服务端自动协商：上行保持经典 Sudoku，下行切换为 AES-CTR 加密并按照原有 ASCII/entropy 掩码重新拆分（仍遵循 padding），不中断连接地提升下行吞吐。
 
 ### 安全与加密
 在混淆层之下，协议可选的采用 AEAD 保护数据完整性与机密性。
@@ -64,9 +47,9 @@
 
 ### 缺点（TODO）
 1.  **数据包格式**: 原生 TCP，UDP 通过 UoT（UDP-over-TCP）隧道支持，暂不暴露原生 UDP 监听。
-2.  **带宽利用率**: 低于30%，推荐线路好的或者带宽高的用户使用，另外推荐机场主使用，可以有效增加用户的流量。
-3.  **客户端代理**: 仅支持socks5/http。
-4.  **协议普及度**: 暂仅有官方和Mihomo支持，
+2.  **下行增强**: 满足条件时自动切换高带宽编码；旧的 Mieru 分离模式已进入弃用状态。
+3.  **客户端代理**: 仅支持 socks5/http（支持通过 TCP 传递的 UDP）。
+4.  **协议普及度**: 暂仅有官方和 Mihomo 支持。
 
 
 

@@ -112,6 +112,9 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 			Port:      payload.MieruPort,
 			Transport: "TCP",
 		}
+		if payload.MieruPort == cfg.LocalPort {
+			cfg.MieruConfig.Transport = "UDP"
+		}
 	}
 
 	cfg.ASCII = decodeASCII(payload.ASCII)
