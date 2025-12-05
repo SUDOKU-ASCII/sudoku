@@ -20,9 +20,10 @@
 
 The core philosophy of this project is to utilize the mathematical properties of Sudoku grids to implement byte stream encoding/decoding, while providing arbitrary padding and resistance to active probing.
 
-## Android Client：
+## Android Client & Server Install Script：
 
 **[Sudodroid](https://github.com/saba-futai/sudoku-android)**
+**[easy-install](https://github.com/SUDOKU-ASCII/easy-install)**
 
 ## Core Features
 

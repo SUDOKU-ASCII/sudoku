@@ -15,9 +15,12 @@
 
 该项目的核心理念是利用数独网格的数学特性，实现对字节流的编解码，同时提供任意填充与抗主动探测能力。
 
-## 安卓客户端：
+## 安卓客户端 & 服务器一键脚本：
 
 **[Sudodroid](https://github.com/saba-futai/sudoku-android)**
+**[easy-install](https://github.com/SUDOKU-ASCII/easy-install)**
+
+
 ## 核心特性
 
 ### 数独隐写算法

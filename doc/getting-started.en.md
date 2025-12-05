@@ -2,6 +2,11 @@
 
 Step-by-step instructions for absolute beginners to get a working client/server pair.
 
+## 0) One Click Script on Server
+
+**[easy-install](https://github.com/SUDOKU-ASCII/easy-install)**
+
+
 ## 1) What you need
 - OS: Linux / macOS / Windows.
 - Either download the release binary or install Go 1.22+ to build it yourself.

@@ -2,6 +2,11 @@
 
 适合从未接触过代理/隧道的新手，带你从下载到验证一路跑通。
 
+## 0. 服务端一键脚本
+
+**[easy-install](https://github.com/SUDOKU-ASCII/easy-install)**
+
+
 ## 1. 准备工作
 - 电脑：Linux / macOS / Windows 均可。
 - 依赖：已下载发布版二进制，或安装 Go 1.22+ 准备自行编译。
