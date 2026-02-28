@@ -5,7 +5,6 @@ type Config struct {
 	Transport          string       `json:"transport"` // "tcp" or "udp"
 	LocalPort          int          `json:"local_port"`
 	ServerAddress      string       `json:"server_address"`
-	Chain              *ChainConfig `json:"chain,omitempty"`
 	FallbackAddr       string       `json:"fallback_address"`
 	Key                string       `json:"key"`
 	AEAD               string       `json:"aead"`              // "aes-128-gcm", "chacha20-poly1305", "none"

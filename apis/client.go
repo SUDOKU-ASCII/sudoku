@@ -170,21 +170,12 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 			}
 			baseConn = conn
 		}
-	}
-	if baseConn != nil {
-		if len(cfg.ChainHops) > 0 {
-			chained, err := chainUpgradeConn(baseConn, cfg, seed)
-			if err != nil {
-				_ = baseConn.Close()
-				return nil, err
-			}
-			baseConn = chained
 		}
-
-		if postHandshake != nil {
-			if err := postHandshake(baseConn); err != nil {
-				_ = baseConn.Close()
-				return nil, err
+		if baseConn != nil {
+			if postHandshake != nil {
+				if err := postHandshake(baseConn); err != nil {
+					_ = baseConn.Close()
+					return nil, err
 			}
 		}
 		return baseConn, nil
@@ -215,27 +206,18 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 	}
 
 	table, err := pickClientTable(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	cConn, err := upgradeClientConn(rawConn, cfg, table, seed, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(cfg.ChainHops) > 0 {
-		chained, err := chainUpgradeConn(cConn, cfg, seed)
 		if err != nil {
-			_ = cConn.Close()
 			return nil, err
 		}
-		cConn = chained
-	}
 
-	if postHandshake != nil {
-		if err := postHandshake(cConn); err != nil {
-			_ = cConn.Close()
+		cConn, err := upgradeClientConn(rawConn, cfg, table, seed, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		if postHandshake != nil {
+			if err := postHandshake(cConn); err != nil {
+				_ = cConn.Close()
 			return nil, err
 		}
 	}
@@ -252,35 +234,4 @@ func validateBaseClientConfig(cfg *ProtocolConfig) error {
 		return fmt.Errorf("ServerAddress cannot be empty")
 	}
 	return cfg.Validate()
-}
-
-func chainUpgradeConn(conn net.Conn, cfg *ProtocolConfig, seed string) (net.Conn, error) {
-	cur := conn
-	for _, hopAddr := range cfg.ChainHops {
-		hopAddr = strings.TrimSpace(hopAddr)
-		if hopAddr == "" {
-			return nil, fmt.Errorf("empty chain hop")
-		}
-
-		if err := protocol.WriteAddress(cur, hopAddr); err != nil {
-			return nil, fmt.Errorf("chain write hop address failed: %w", err)
-		}
-		if !cfg.DisableHTTPMask {
-			if err := httpmask.WriteRandomRequestHeaderWithPathRoot(cur, hopAddr, cfg.HTTPMaskPathRoot); err != nil {
-				return nil, fmt.Errorf("chain write http mask failed: %w", err)
-			}
-		}
-
-		table, err := pickClientTable(cfg)
-		if err != nil {
-			return nil, err
-		}
-
-		next, err := upgradeClientConn(cur, cfg, table, seed, nil)
-		if err != nil {
-			return nil, err
-		}
-		cur = next
-	}
-	return cur, nil
 }

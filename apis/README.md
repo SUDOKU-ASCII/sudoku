@@ -12,7 +12,6 @@
 - AEAD：`chacha20-poly1305`（默认）或 `aes-128-gcm`，`none` 仅测试用。
 - 填充：`PaddingMin`/`PaddingMax` 为 0-100 的概率百分比。
 - 客户端：设置 `ServerAddress`、`TargetAddress`。
-- 链式代理：可选 `ChainHops`（多跳 `host:port` 列表），会对每一跳执行完整握手，最后一跳才连接 `TargetAddress`。
 - 服务端：可设置 `HandshakeTimeoutSeconds` 限制握手耗时。
 
 ## 客户端示例
@@ -36,7 +35,6 @@ func main() {
 
 	cfg := &apis.ProtocolConfig{
 		ServerAddress: "1.2.3.4:8443",
-		// Optional: ChainHops: []string{"mid.example.com:443", "exit.example.com:443"},
 		TargetAddress: "example.com:443",
 		Key:           "shared-key-hex-or-plain",
 		AEADMethod:    "chacha20-poly1305",

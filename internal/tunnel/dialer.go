@@ -30,7 +30,7 @@ type BaseDialer struct {
 	PrivateKey []byte
 }
 
-// DialBase establishes a Sudoku tunnel connection to the configured server (and optional chain hops),
+// DialBase establishes a Sudoku tunnel connection to the configured server,
 // performing the handshake but not requesting any target address.
 func (d *BaseDialer) DialBase() (net.Conn, error) {
 	return d.dialBase()
@@ -71,11 +71,6 @@ func (d *BaseDialer) pickTable() (*sudoku.Table, error) {
 func (d *BaseDialer) dialBase() (net.Conn, error) {
 	if d.Config == nil {
 		return nil, fmt.Errorf("missing config")
-	}
-
-	chainHops := []string(nil)
-	if d.Config.Chain != nil && len(d.Config.Chain.Hops) > 0 {
-		chainHops = d.Config.Chain.Hops
 	}
 
 	var baseConn net.Conn
@@ -132,27 +127,12 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 		}
 	}
 
-	if len(chainHops) == 0 {
-		return baseConn, nil
-	}
-	return d.chainUpgrade(baseConn, chainHops)
+	return baseConn, nil
 }
 
 func (d *BaseDialer) dialTarget(destAddrStr string) (net.Conn, error) {
 	if strings.TrimSpace(destAddrStr) == "" {
 		return nil, fmt.Errorf("empty target address")
-	}
-
-	if d.Config != nil && d.Config.Chain != nil && len(d.Config.Chain.Hops) > 0 {
-		cConn, err := d.dialBase()
-		if err != nil {
-			return nil, err
-		}
-		if err := protocol.WriteAddress(cConn, destAddrStr); err != nil {
-			_ = cConn.Close()
-			return nil, fmt.Errorf("write address failed: %w", err)
-		}
-		return cConn, nil
 	}
 
 	if d.Config.HTTPMaskTunnelEnabled() {
@@ -190,45 +170,6 @@ func (d *BaseDialer) dialTarget(destAddrStr string) (net.Conn, error) {
 		return nil, fmt.Errorf("write address failed: %w", err)
 	}
 	return cConn, nil
-}
-
-func (d *BaseDialer) chainUpgrade(baseConn net.Conn, hops []string) (net.Conn, error) {
-	conn := baseConn
-	for _, hopAddr := range hops {
-		if strings.TrimSpace(hopAddr) == "" {
-			continue
-		}
-
-		// Ask the current hop to connect to the next hop, then immediately start the next handshake.
-		if err := protocol.WriteAddress(conn, hopAddr); err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("chain write hop address failed: %w", err)
-		}
-
-		// Inner hops always use direct Sudoku handshake over the already-established TCP stream.
-		// We keep the legacy HTTP mask header optional for compatibility with servers that expect it.
-		if d.Config != nil && !d.Config.HTTPMask.Disable {
-			if err := httpmask.WriteRandomRequestHeaderWithPathRoot(conn, hopAddr, d.Config.HTTPMask.PathRoot); err != nil {
-				_ = conn.Close()
-				return nil, fmt.Errorf("chain write http mask failed: %w", err)
-			}
-		}
-
-		table, err := d.pickTable()
-		if err != nil {
-			_ = conn.Close()
-			return nil, err
-		}
-
-		nextConn, err := ClientHandshake(conn, d.Config, table, d.PrivateKey)
-		if err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("chain handshake failed: %w", err)
-		}
-		conn = nextConn
-	}
-
-	return conn, nil
 }
 
 // ClientHandshake upgrades a raw connection to a Sudoku connection

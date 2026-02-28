@@ -19,13 +19,12 @@ with this application without prior consent.
 */
 package apis
 
-import (
-	"fmt"
-	"net"
-	"strings"
+	import (
+		"fmt"
+		"strings"
 
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
-)
+		"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	)
 
 // ProtocolConfig defines all parameters required by the Sudoku protocol stack.
 //
@@ -41,15 +40,6 @@ type ProtocolConfig struct {
 	// Format: "host:port" or "ip:port"
 	// Example: "example.com:443" or "1.2.3.4:8080"
 	ServerAddress string
-
-	// ChainHops enables multi-hop (chained) Sudoku proxying.
-	//
-	// When set (len>0), the client first connects to ServerAddress, then asks that server to connect to each hop
-	// in order, performing a full Sudoku handshake on every hop (nested tunnels). The final hop receives the
-	// TargetAddress.
-	//
-	// All hops share the same Key/AEAD/Table settings in this ProtocolConfig.
-	ChainHops []string
 
 	// ============ Encryption & Obfuscation ============
 
@@ -211,16 +201,6 @@ func (c *ProtocolConfig) Validate() error {
 			default:
 				return fmt.Errorf("invalid HTTPMaskPathRoot: contains invalid character %q", c)
 			}
-		}
-	}
-
-	for i, hop := range c.ChainHops {
-		hop = strings.TrimSpace(hop)
-		if hop == "" {
-			return fmt.Errorf("ChainHops[%d] cannot be empty", i)
-		}
-		if _, _, err := net.SplitHostPort(hop); err != nil {
-			return fmt.Errorf("ChainHops[%d] invalid address %q: %w", i, hop, err)
 		}
 	}
 
