@@ -111,13 +111,14 @@ jobs:
           BINARY_NAME=sudoku${{ matrix.extension }}
           ASSET_NAME=${{ matrix.asset_name }}
           
-          cp configs/config.json config.json
+          cp configs/server.config.json server.config.json
+          cp configs/client.config.json client.config.json
           
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip ${ASSET_NAME}.zip ${BINARY_NAME} config.json configs/README.md
+            zip ${ASSET_NAME}.zip ${BINARY_NAME} server.config.json client.config.json configs/README.md configs/README.zh_CN.md
             echo "ARCHIVE_NAME=${ASSET_NAME}.zip" >> $GITHUB_ENV
           else
-            tar -czvf ${ASSET_NAME}.tar.gz ${BINARY_NAME} config.json configs/README.md
+            tar -czvf ${ASSET_NAME}.tar.gz ${BINARY_NAME} server.config.json client.config.json configs/README.md configs/README.zh_CN.md
             echo "ARCHIVE_NAME=${ASSET_NAME}.tar.gz" >> $GITHUB_ENV
           fi
 
