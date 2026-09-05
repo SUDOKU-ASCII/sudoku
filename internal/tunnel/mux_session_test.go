@@ -20,11 +20,14 @@ with this application without prior consent.
 package tunnel
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -280,5 +283,105 @@ func TestMuxStream_CloseWritePreservesResponse(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("server did not finish half-closed exchange")
+	}
+}
+
+func TestMuxStream_RemoteCloseKeepsLocalWriteAfterCloseRead(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	serverDone := make(chan error, 1)
+	serverSession := newMuxSession(serverConn, func(stream *muxStream, _ []byte) {
+		serverDone <- stream.CloseWrite()
+	})
+	clientSession := newMuxSession(clientConn, nil)
+	t.Cleanup(func() {
+		clientSession.closeWithError(net.ErrClosed)
+		serverSession.closeWithError(net.ErrClosed)
+	})
+
+	clientStream := newMuxStream(clientSession, 1)
+	clientSession.registerStream(clientStream)
+	if err := clientSession.sendFrame(muxFrameOpen, clientStream.id, nil); err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	select {
+	case err := <-serverDone:
+		if err != nil {
+			t.Fatalf("server CloseWrite: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not close its write side")
+	}
+	if _, err := clientStream.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("wait for remote close: %v", err)
+	}
+	// Closing reads must not make the stream disappear while its write side
+	// is still available for a request/response style exchange.
+	if err := clientStream.CloseRead(); err != nil {
+		t.Fatalf("CloseRead: %v", err)
+	}
+	if _, err := clientStream.Write([]byte("request")); err != nil {
+		t.Fatalf("write after remote close: %v", err)
+	}
+	if err := clientStream.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite: %v", err)
+	}
+}
+
+func TestMuxSession_ConcurrentStreamsRemainOrdered(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	serverSession := newMuxSession(serverConn, func(stream *muxStream, _ []byte) {
+		_, _ = io.Copy(stream, stream)
+		_ = stream.CloseWrite()
+	})
+	clientSession := newMuxSession(clientConn, nil)
+	t.Cleanup(func() {
+		clientSession.closeWithError(net.ErrClosed)
+		serverSession.closeWithError(net.ErrClosed)
+	})
+
+	const streamCount = 32
+	var wg sync.WaitGroup
+	errCh := make(chan error, streamCount)
+	for i := 0; i < streamCount; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			st, err := openMuxStream(clientSession, []byte(fmt.Sprintf("target-%d", i)))
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer st.Close()
+			payload := bytes.Repeat([]byte{byte(i)}, 96*1024+17)
+			if _, err := st.Write(payload); err != nil {
+				errCh <- err
+				return
+			}
+			closeWriter, ok := st.(interface{ CloseWrite() error })
+			if !ok {
+				errCh <- errors.New("mux stream does not support CloseWrite")
+				return
+			}
+			if err := closeWriter.CloseWrite(); err != nil {
+				errCh <- err
+				return
+			}
+			got, err := io.ReadAll(st)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if !bytes.Equal(got, payload) {
+				errCh <- fmt.Errorf("stream %d payload mismatch: got %d bytes, want %d", i, len(got), len(payload))
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -1,5 +1,13 @@
 # 更新日志
 
+## v0.5.0（2026-09-05）
+- `BREAKING/httpmask`: 非 WebSocket 的 `auto`、`stream`、`poll` 重构为 v0.5 session 上传序列协议。每个上传批次带单调递增序号；CDN 在服务端已收包后丢失 HTTP 响应时，客户端以同一序号和原始负载重试，服务端幂等确认而不重复写入。非 WS HTTPMask 的客户端和服务端必须同时升级到 v0.5.0；旧 v0.4.x 非 WS peer 会被明确拒绝。
+- `httpmask`: 每个 split session 只允许一个下行 pull 读取后端连接。新 pull 会有序接管旧 pull；下行数据仅在 HTTP 响应成功 flush 后确认，CDN reset、超时或连接替换不会丢弃尚未确认的数据。`auto/stream/poll` 的短暂网络错误改为持续、受限退避重连，避免固定重试次数耗尽后长时间断流。
+- `perf/httpmask`: 移除 mux 场景额外等待的 spare preconnect，只等待下行 pull 与首个上传 ready；在长 RTT 链路上减少一轮无效预热等待，使非 WS 首次可用时延保持与 HTTPMask 关闭路径同一量级。
+- `mux`: 修复 stream 半关闭状态机。远端关闭写方向后，本地写方向不会因 `CloseRead` 被提前移除，避免合法帧被静默丢弃并造成 mux 会话长期卡死。
+- `concurrency`: 为 HTTPMask 接收队列补齐并发读保护，并新增 mux 多 stream 有序回显、上传重复幂等与下行 pull 接管回归测试。
+- `compatibility`: `mux off`、`httpmask disable` 与 `httpmask ws` 的协议及行为保持不变；fallback、rotate、customized 和 early handshake 继续沿用现有语义。
+
 ## v0.4.6（2026-05-25）
 - `sudoku/downlink`: 删除服务端下行 MTU 边界触发的 1/13 概率纯 padding 小包注入；保留常规 Sudoku padding 与 packed AEAD Record 前缀扰动，避免 TCP 粘包下无效的额外写入和带宽浪费。
 - `perf`: 优化下行热路径，RecordConn 复用读帧缓冲并原地解密，Sudoku/Packed 读取优先直接解码进调用方 buffer，同时减少无 padding 编码容量浪费并调大代理 pipe buffer 以降低大下载 record 开销。

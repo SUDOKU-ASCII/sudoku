@@ -30,6 +30,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -440,12 +441,12 @@ func TestTunnelServer_Stream_SplitSession_PushPull(t *testing.T) {
 			_ = c.Close()
 			t.Fatalf("authorize invalid http response: %q", string(raw))
 		}
-		body := strings.TrimSpace(parts[1])
-		if !strings.HasPrefix(body, "token=") {
+		authResp, err := parseAuthorizeResponse([]byte(parts[1]))
+		if err != nil {
 			_ = c.Close()
-			t.Fatalf("authorize missing token, body=%q", body)
+			t.Fatalf("authorize response: %v (%q)", err, strings.TrimSpace(parts[1]))
 		}
-		token = strings.TrimPrefix(body, "token=")
+		token = authResp.token
 		if token == "" {
 			_ = c.Close()
 			t.Fatalf("authorize empty token")
@@ -481,14 +482,20 @@ func TestTunnelServer_Stream_SplitSession_PushPull(t *testing.T) {
 			readCh <- readResult{b: buf, err: err}
 		}()
 
-		_, _ = io.WriteString(client, fmt.Sprintf(
-			"POST /api/v1/upload?token=%s HTTP/1.1\r\n"+
+		if _, err := io.WriteString(client, fmt.Sprintf(
+			"POST /api/v1/upload?token=%s&seq=1 HTTP/1.1\r\n"+
 				"Host: example.com\r\n"+
 				"X-Sudoku-Tunnel: stream\r\n"+
 				"Content-Length: %d\r\n"+
 				"\r\n"+
-				"%s", token, len(payload), payload))
-		_, _ = io.ReadAll(client)
+				"%s", token, len(payload), payload)); err != nil {
+			t.Fatalf("write upload request: %v", err)
+		}
+		_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+		response, readErr := io.ReadAll(client)
+		if readErr != nil {
+			t.Fatalf("read upload response: %v (%q)", readErr, response)
+		}
 		<-done
 		_ = client.Close()
 
@@ -540,6 +547,114 @@ func TestTunnelServer_Stream_SplitSession_PushPull(t *testing.T) {
 		if string(body) != "xyz" {
 			t.Fatalf("pulled payload mismatch: got %q want %q", string(body), "xyz")
 		}
+	}
+}
+
+func TestTunnelServer_UploadSequenceIsIdempotent(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{Mode: "stream"})
+	peer, sessionConn := newHalfPipe()
+	t.Cleanup(func() {
+		_ = peer.Close()
+		_ = sessionConn.Close()
+	})
+
+	sess := &tunnelSession{conn: sessionConn, lastActive: time.Now(), nextUploadSeq: 1}
+	srv.sessions["session"] = sess
+
+	firstRead := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, len("payload"))
+		_, _ = io.ReadFull(peer, buf)
+		firstRead <- buf
+	}()
+	if err := srv.writeSessionUpload("session", sess, 1, []byte("payload")); err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	if got := string(<-firstRead); got != "payload" {
+		t.Fatalf("first upload payload = %q", got)
+	}
+
+	if err := srv.writeSessionUpload("session", sess, 1, []byte("duplicate")); err != nil {
+		t.Fatalf("duplicate upload: %v", err)
+	}
+	_ = peer.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	var one [1]byte
+	if _, err := peer.Read(one[:]); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("duplicate upload wrote another payload: %v", err)
+	}
+	_ = peer.SetReadDeadline(time.Time{})
+
+	if err := srv.writeSessionUpload("session", sess, 3, []byte("gap")); !errors.Is(err, errUploadSequenceGap) {
+		t.Fatalf("sequence gap error = %v, want %v", err, errUploadSequenceGap)
+	}
+}
+
+func TestTunnelServer_NewPullTakesOverWithoutLosingDownlink(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:            "stream",
+		PullReadTimeout: 30 * time.Millisecond,
+		SessionTTL:      time.Second,
+	})
+	peer, sessionConn := newHalfPipe()
+	t.Cleanup(func() {
+		_ = peer.Close()
+		_ = sessionConn.Close()
+	})
+
+	const token = "session"
+	srv.sessions[token] = &tunnelSession{conn: sessionConn, lastActive: time.Now(), nextUploadSeq: 1}
+
+	firstClient, firstServer := net.Pipe()
+	firstDone := make(chan struct{})
+	go func() {
+		_, _, _ = srv.streamPull(firstServer, token)
+		close(firstDone)
+	}()
+	firstReader := bufio.NewReader(firstClient)
+	firstResponse, err := http.ReadResponse(firstReader, &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read first pull response: %v", err)
+	}
+	defer firstResponse.Body.Close()
+
+	secondClient, secondServer := net.Pipe()
+	secondDone := make(chan struct{})
+	go func() {
+		_, _, _ = srv.streamPull(secondServer, token)
+		close(secondDone)
+	}()
+	secondReader := bufio.NewReader(secondClient)
+	secondResponse, err := http.ReadResponse(secondReader, &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read second pull response: %v", err)
+	}
+	defer secondResponse.Body.Close()
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := peer.Write([]byte("downlink"))
+		writeDone <- err
+	}()
+	body, err := io.ReadAll(secondResponse.Body)
+	if err != nil {
+		t.Fatalf("read replacement pull body: %v", err)
+	}
+	if got := string(body); got != "downlink" {
+		t.Fatalf("replacement pull payload = %q", got)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write downlink: %v", err)
+	}
+
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("superseded pull did not exit")
+	}
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("replacement pull did not finish")
 	}
 }
 

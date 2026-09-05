@@ -381,7 +381,10 @@ func (c *muxStream) closeRemoteWrite() bool {
 		return false
 	}
 	c.remoteWriteClosed = true
-	remove := c.localWriteClosed && (c.remoteWriteClosed || c.localReadClosed)
+	// A remote CLOSE only ends the remote-to-local direction. Keep the
+	// stream registered while the local write side is still usable; removing
+	// it here would silently discard a valid response after CloseRead.
+	remove := c.localWriteClosed && c.remoteWriteClosed
 	c.cond.Broadcast()
 	c.mu.Unlock()
 	return remove

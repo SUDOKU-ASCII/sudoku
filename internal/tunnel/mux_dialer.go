@@ -87,8 +87,8 @@ func openMuxStream(sess *muxSession, payload []byte) (net.Conn, error) {
 	return st, nil
 }
 
-// Warm establishes the native mux session. Split HTTPMask sessions also wait
-// for the downlink, mux preface upload, and one spare upload connection.
+// Warm establishes the native mux session. Split HTTPMask sessions wait for
+// the downlink and the first upload to be accepted before mux is exposed.
 func (d *MuxDialer) Warm(ctx context.Context) error {
 	_, err := d.getOrCreateSession(ctx)
 	return err

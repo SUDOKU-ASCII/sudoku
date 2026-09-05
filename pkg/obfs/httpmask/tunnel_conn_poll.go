@@ -28,7 +28,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,7 +46,7 @@ type pollConn struct {
 	closeURL   string
 	headerHost string
 	auth       *tunnelAuth
-	waitSpare  func(context.Context) error
+	uploadSeq  atomic.Uint64
 }
 
 func (c *pollConn) closeWithError(err error) error {
@@ -83,12 +83,6 @@ func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions)
 		queuedConn: newQueuedConn(),
 	}
 
-	if strings.EqualFold(strings.TrimSpace(opts.Multiplex), "on") {
-		c.waitSpare = func(ctx context.Context) error {
-			return info.tunnelClient.waitPreconnect(ctx, c.closed, info.pushURL, 1)
-		}
-		go info.tunnelClient.maintainPreconnect(connCtx, info.pushURL, 1)
-	}
 	go c.pullLoop()
 	go c.pushLoop()
 	outConn := net.Conn(c)
@@ -120,15 +114,12 @@ func (c *pollConn) waitReady(ctx context.Context) error {
 	if err := c.readiness.wait(ctx, c.closed, c.closedErr); err != nil {
 		return err
 	}
-	if c.waitSpare != nil {
-		return c.waitSpare(ctx)
-	}
 	return nil
 }
 
 func (c *pollConn) pullLoop() {
 	const (
-		maxDialRetry = 12
+		maxDialRetry = -1
 		minBackoff   = 10 * time.Millisecond
 		maxBackoff   = 250 * time.Millisecond
 	)
@@ -155,8 +146,9 @@ func (c *pollConn) pullLoop() {
 
 		resp, err := c.client.Do(req)
 		if err != nil {
-			if (isDialError(err) || isRetryableHTTPTransportError(err)) && dialRetry < maxDialRetry {
+			if (isDialError(err) || isRetryableHTTPTransportError(err)) && (maxDialRetry < 0 || dialRetry < maxDialRetry) {
 				dialRetry++
+				closeIdleConnections(c.client)
 				select {
 				case <-time.After(backoff):
 				case <-c.closed:
@@ -175,6 +167,22 @@ func (c *pollConn) pullLoop() {
 		backoff = minBackoff
 
 		if resp.StatusCode != http.StatusOK {
+			if isRetryableStatusCode(resp.StatusCode) && (maxDialRetry < 0 || dialRetry < maxDialRetry) {
+				dialRetry++
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4*1024))
+				_ = resp.Body.Close()
+				closeIdleConnections(c.client)
+				select {
+				case <-time.After(backoff):
+				case <-c.closed:
+					return
+				}
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
 			_ = resp.Body.Close()
 			_ = c.closeWithError(fmt.Errorf("poll pull bad status: %s", resp.Status))
 			return
@@ -203,6 +211,10 @@ func (c *pollConn) pullLoop() {
 		}
 		_ = resp.Body.Close()
 		if err := scanner.Err(); err != nil {
+			if isRetryableHTTPTransportError(err) {
+				closeIdleConnections(c.client)
+				continue
+			}
 			_ = c.closeWithError(fmt.Errorf("poll pull scan failed: %w", err))
 			return
 		}
@@ -218,7 +230,7 @@ func (c *pollConn) pushLoop() {
 		maxBatchBytes   = 64 * 1024
 		flushInterval   = 5 * time.Millisecond
 		maxLineRawBytes = 16 * 1024
-		maxDialRetry    = 12
+		maxDialRetry    = -1
 		minBackoff      = 10 * time.Millisecond
 		maxBackoff      = 250 * time.Millisecond
 	)
@@ -241,28 +253,42 @@ func (c *pollConn) pushLoop() {
 		if buf.Len() == 0 {
 			return nil
 		}
-
-		reqCtx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.pushURL, bytes.NewReader(buf.Bytes()))
+		sequence := c.uploadSeq.Add(1)
+		requestURL, err := uploadURL(c.pushURL, sequence)
 		if err != nil {
-			cancel()
 			return err
 		}
-		req.Host = c.headerHost
-		applyTunnelHeaders(req.Header, c.headerHost, TunnelModePoll)
-		applyTunnelAuth(req, c.auth, TunnelModePoll, http.MethodPost, "/api/v1/upload")
-		req.Header.Set("Content-Type", "text/plain")
+		payload := append([]byte(nil), buf.Bytes()...)
 
-		resp, err := c.client.Do(req)
-		if err != nil {
-			cancel()
+		if err := retryDial(c.closed, c.closedErr, maxDialRetry, minBackoff, maxBackoff, func() error {
+			reqCtx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, requestURL, bytes.NewReader(payload))
+			if err != nil {
+				return err
+			}
+			req.Host = c.headerHost
+			applyTunnelHeaders(req.Header, c.headerHost, TunnelModePoll)
+			applyTunnelAuth(req, c.auth, TunnelModePoll, http.MethodPost, "/api/v1/upload")
+			req.Header.Set("Content-Type", "text/plain")
+
+			resp, err := c.client.Do(req)
+			if err != nil {
+				closeIdleConnections(c.client)
+				return err
+			}
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4*1024))
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				err = statusError(resp)
+				if isRetryableHTTPTransportError(err) {
+					closeIdleConnections(c.client)
+				}
+				return err
+			}
+			return nil
+		}); err != nil {
 			return err
-		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4*1024))
-		_ = resp.Body.Close()
-		cancel()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("bad status: %s", resp.Status)
 		}
 
 		buf.Reset()
@@ -271,9 +297,7 @@ func (c *pollConn) pushLoop() {
 		return nil
 	}
 
-	flushWithRetry := func() error {
-		return retryDial(c.closed, c.closedErr, maxDialRetry, minBackoff, maxBackoff, flush)
-	}
+	flushWithRetry := flush
 	resetTimer(timer, flushInterval)
 
 	enqueue := func(b []byte) error {

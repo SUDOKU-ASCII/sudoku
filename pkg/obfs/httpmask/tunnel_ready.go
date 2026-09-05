@@ -110,8 +110,7 @@ func wrapReadyTunnelConn(conn net.Conn, waitReady func(context.Context) error) n
 }
 
 // WaitTunnelReady waits for a split HTTP tunnel's downlink and first upload.
-// Native mux sessions also wait for a spare upload connection. Other
-// transports are ready when DialTunnel returns and complete immediately.
+// Other transports are ready when DialTunnel returns and complete immediately.
 func WaitTunnelReady(ctx context.Context, conn net.Conn) error {
 	if ready, ok := conn.(tunnelReadyConn); ok {
 		return ready.waitHTTPMaskReady(ctx)

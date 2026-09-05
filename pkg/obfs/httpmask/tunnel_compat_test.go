@@ -185,17 +185,17 @@ func TestPreconnectDialer_MaintainsSpareConnection(t *testing.T) {
 	waitForSpare()
 }
 
-func TestSessionPreconnectCount(t *testing.T) {
+func TestSessionPreconnectCountDoesNotAddMuxRTT(t *testing.T) {
 	for _, tc := range []struct {
 		mode string
 		want int
 	}{
 		{mode: "off", want: tunnelPreconnectCount},
 		{mode: "auto", want: tunnelPreconnectCount},
-		{mode: "on", want: tunnelMuxPreconnectCount},
-		{mode: " ON ", want: tunnelMuxPreconnectCount},
+		{mode: "on", want: tunnelPreconnectCount},
+		{mode: " ON ", want: tunnelPreconnectCount},
 	} {
-		if got := sessionPreconnectCount(tc.mode); got != tc.want {
+		if got := sessionPreconnectCount(); got != tc.want {
 			t.Fatalf("sessionPreconnectCount(%q) = %d, want %d", tc.mode, got, tc.want)
 		}
 	}
@@ -374,7 +374,7 @@ func TestTunnelServer_SessionControlIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestRetryDial_DoesNotRetryAmbiguousTransportEOF(t *testing.T) {
+func TestRetryDial_RetriesTransientTransportEOF(t *testing.T) {
 	closed := make(chan struct{})
 	var calls atomic.Int32
 	err := retryDial(closed, nil, 3, time.Millisecond, time.Millisecond, func() error {
@@ -384,8 +384,8 @@ func TestRetryDial_DoesNotRetryAmbiguousTransportEOF(t *testing.T) {
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("retryDial error = %v, want EOF", err)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("ambiguous request attempts = %d, want 1", calls.Load())
+	if calls.Load() != 4 {
+		t.Fatalf("transient request attempts = %d, want 4", calls.Load())
 	}
 }
 
@@ -687,7 +687,7 @@ func TestDialTunnel_WaitReadyConfirmsSplitSession(t *testing.T) {
 	}
 }
 
-func TestDialTunnel_NewClientWithV047Server(t *testing.T) {
+func TestDialTunnel_RejectsPreV050Server(t *testing.T) {
 	tests := []struct {
 		name     string
 		dialMode string
@@ -695,7 +695,6 @@ func TestDialTunnel_NewClientWithV047Server(t *testing.T) {
 	}{
 		{name: "stream", dialMode: "stream", wireMode: TunnelModeStream},
 		{name: "poll", dialMode: "poll", wireMode: TunnelModePoll},
-		{name: "auto", dialMode: "auto", wireMode: TunnelModeStream},
 	}
 
 	for _, tt := range tests {
@@ -806,12 +805,13 @@ func TestDialTunnel_NewClientWithV047Server(t *testing.T) {
 				Multiplex:  "off",
 				TLSEnabled: false,
 			})
-			if err != nil {
-				t.Fatalf("dial v0.4.7 server: %v", err)
+			if err == nil {
+				_ = client.Close()
+				t.Fatal("dial succeeded against a pre-v0.5 HTTPMask server")
 			}
-			defer client.Close()
-
-			assertBidirectionalExchange(t, client, appConn)
+			if !strings.Contains(err.Error(), "upload sequencing") {
+				t.Fatalf("dial legacy server error = %v, want upload sequencing error", err)
+			}
 			select {
 			case err := <-handlerErr:
 				t.Fatal(err)
@@ -821,7 +821,7 @@ func TestDialTunnel_NewClientWithV047Server(t *testing.T) {
 	}
 }
 
-func TestTunnelServer_V047ClientBidirectional(t *testing.T) {
+func TestTunnelServer_RejectsPreV050Upload(t *testing.T) {
 	for _, mode := range []TunnelMode{TunnelModeStream, TunnelModePoll} {
 		t.Run(string(mode), func(t *testing.T) {
 			srv := NewTunnelServer(TunnelServerOptions{
@@ -857,48 +857,29 @@ func TestTunnelServer_V047ClientBidirectional(t *testing.T) {
 			server := waitForTunnelConn(t, tunnelCh)
 			defer server.Close()
 
-			uplink := []byte("client-to-server")
-			readDone := make(chan error, 1)
-			go func() {
-				buf := make([]byte, len(uplink))
-				_ = server.SetReadDeadline(time.Now().Add(2 * time.Second))
-				_, err := io.ReadFull(server, buf)
-				if err == nil && !bytes.Equal(buf, uplink) {
-					err = fmt.Errorf("uplink = %q, want %q", buf, uplink)
-				}
-				readDone <- err
-			}()
 			query := url.Values{"token": []string{authResp.token}}
-			upload := encodeV047Payload(mode, uplink)
-			resp = doV047Request(t, client, auth, mode, http.MethodPost, baseURL, "/api/v1/upload", query, upload)
+			upload := encodeV047Payload(mode, []byte("client-to-server"))
+			requestURL := baseURL + joinPathRoot(compatPathRoot, "/api/v1/upload") + "?" + query.Encode()
+			req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(upload))
+			if err != nil {
+				t.Fatalf("new legacy upload request: %v", err)
+			}
+			req.Host = strings.TrimPrefix(baseURL, "http://")
+			applyTunnelHeaders(req.Header, req.Host, mode)
+			applyTunnelAuth(req, auth, mode, http.MethodPost, "/api/v1/upload")
+			if mode == TunnelModePoll {
+				req.Header.Set("Content-Type", "text/plain")
+			} else {
+				req.Header.Set("Content-Type", "application/octet-stream")
+			}
+			resp, err = client.Do(req)
+			if err != nil {
+				t.Fatalf("send legacy upload request: %v", err)
+			}
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
-			if err := <-readDone; err != nil {
-				t.Fatalf("server read: %v", err)
-			}
-
-			downlink := []byte("server-to-client")
-			writeDone := make(chan error, 1)
-			go func() {
-				_ = server.SetWriteDeadline(time.Now().Add(2 * time.Second))
-				_, err := server.Write(downlink)
-				writeDone <- err
-			}()
-			resp = doV047Request(t, client, auth, mode, http.MethodGet, baseURL, "/stream", query, nil)
-			body, err = io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if err != nil {
-				t.Fatalf("read pull response: %v", err)
-			}
-			if err := <-writeDone; err != nil {
-				t.Fatalf("server write: %v", err)
-			}
-			got, err := decodeV047Payload(mode, body)
-			if err != nil {
-				t.Fatalf("decode downlink: %v", err)
-			}
-			if !bytes.Equal(got, downlink) {
-				t.Fatalf("downlink = %q, want %q", got, downlink)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("legacy upload status = %s, want 400", resp.Status)
 			}
 		})
 	}

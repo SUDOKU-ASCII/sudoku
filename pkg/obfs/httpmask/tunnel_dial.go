@@ -30,6 +30,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,8 +40,9 @@ const (
 	tunnelEarlyDataQueryKey   = "ed"
 	tunnelEarlyDataHeader     = "X-Sudoku-Early"
 	tunnelStreamEOFHeader     = "X-Sudoku-Stream-EOF"
+	tunnelUploadSequenceQuery = "seq"
+	tunnelUploadSequenceCap   = "upload-seq"
 	tunnelPreconnectCount     = 3
-	tunnelMuxPreconnectCount  = tunnelPreconnectCount + 1
 	tunnelTLSHandshakeTimeout = 10 * time.Second
 )
 
@@ -73,10 +75,10 @@ func canonicalHeaderHost(urlHost, scheme string) string {
 	return host
 }
 
-func sessionPreconnectCount(multiplex string) int {
-	if strings.EqualFold(strings.TrimSpace(multiplex), "on") {
-		return tunnelMuxPreconnectCount
-	}
+func sessionPreconnectCount() int {
+	// Three connections are enough to overlap authorize, pull and the first
+	// upload. Mux used to wait for a fourth "spare" connection before it was
+	// usable, which added a full WAN RTT to every split-tunnel session.
 	return tunnelPreconnectCount
 }
 
@@ -111,6 +113,9 @@ func parseAuthorizeResponse(body []byte) (*authorizeResponse, error) {
 			return nil, fmt.Errorf("decode early authorize payload failed: %w", err)
 		}
 		out.earlyPayload = decoded
+	}
+	if findAuthorizeField(body, "cap=") != tunnelUploadSequenceCap {
+		return nil, errors.New("server does not support HTTPMask v0.5 upload sequencing")
 	}
 	return out, nil
 }
@@ -151,14 +156,24 @@ func parseEarlyDataQuery(u *url.URL) ([]byte, error) {
 }
 
 type sessionDialInfo struct {
-	client       *http.Client
-	tunnelClient *tunnelHTTPClient
-	pushURL      string
-	pullURL      string
-	finURL       string
-	closeURL     string
-	headerHost   string
-	auth         *tunnelAuth
+	client     *http.Client
+	pushURL    string
+	pullURL    string
+	finURL     string
+	closeURL   string
+	headerHost string
+	auth       *tunnelAuth
+}
+
+func uploadURL(rawURL string, sequence uint64) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set(tunnelUploadSequenceQuery, strconv.FormatUint(sequence, 10))
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 type transportKey struct {
@@ -392,10 +407,10 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 	applyTunnelHeaders(req.Header, headerHost, mode)
 	applyTunnelAuth(req, auth, mode, http.MethodGet, "/session")
 
-	// Overlap the authorization, initial pull, and initial push connection handshakes.
-	// Authorization, pull, and the mux preface consume three connections.
-	// Native mux keeps one more ready for the first user-visible OPEN upload.
-	cancelPreconnect := httpClient.preconnect(ctx, req, sessionPreconnectCount(opts.Multiplex))
+	// Overlap authorization, initial pull, and initial push connection handshakes.
+	// Keeping this to three avoids adding an extra WAN RTT before mux can open
+	// its first logical stream.
+	cancelPreconnect := httpClient.preconnect(ctx, req, sessionPreconnectCount())
 	keepPreconnected := false
 	defer func() {
 		if !keepPreconnected {
@@ -418,7 +433,7 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 
 	authResp, err := parseAuthorizeResponse(bodyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%s authorize failed: %q", mode, strings.TrimSpace(string(bodyBytes)))
+		return nil, fmt.Errorf("%s authorize failed: %w", mode, err)
 	}
 	token := authResp.token
 	if token == "" {
@@ -437,14 +452,13 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 	keepPreconnected = true
 
 	return &sessionDialInfo{
-		client:       httpClient.client,
-		tunnelClient: httpClient,
-		pushURL:      pushURL,
-		pullURL:      pullURL,
-		finURL:       finURL,
-		closeURL:     closeURL,
-		headerHost:   headerHost,
-		auth:         auth,
+		client:     httpClient.client,
+		pushURL:    pushURL,
+		pullURL:    pullURL,
+		finURL:     finURL,
+		closeURL:   closeURL,
+		headerHost: headerHost,
+		auth:       auth,
 	}, nil
 }
 

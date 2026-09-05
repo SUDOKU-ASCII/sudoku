@@ -44,6 +44,7 @@ type queuedConn struct {
 	writeErr      error
 	readEOF       chan struct{}
 	readEOFOnce   sync.Once
+	readMu        sync.Mutex
 
 	mu         sync.Mutex
 	readBuf    []byte
@@ -151,6 +152,9 @@ func (c *queuedConn) closedErr() error {
 }
 
 func (c *queuedConn) Read(b []byte) (n int, err error) {
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
+
 	if len(c.readBuf) == 0 {
 		select {
 		case c.readBuf = <-c.rxc:

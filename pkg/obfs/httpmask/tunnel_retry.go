@@ -24,11 +24,54 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"syscall"
 	"time"
 )
+
+type httpStatusError struct {
+	code   int
+	status string
+}
+
+func (e *httpStatusError) Error() string {
+	if e == nil || e.status == "" {
+		return "bad status"
+	}
+	return "bad status: " + e.status
+}
+
+func isRetryableStatusCode(code int) bool {
+	return code == http.StatusRequestTimeout || code == http.StatusTooManyRequests || code >= 500
+}
+
+func statusError(resp *http.Response) error {
+	if resp == nil {
+		return &httpStatusError{}
+	}
+	return &httpStatusError{code: resp.StatusCode, status: resp.Status}
+}
+
+type idleConnCloser interface{ CloseIdleConnections() }
+
+func closeIdleConnections(client *http.Client) {
+	if client == nil || client.Transport == nil {
+		return
+	}
+	if closer, ok := client.Transport.(idleConnCloser); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
+func responseDeclaresTrailer(resp *http.Response, key string) bool {
+	if resp == nil {
+		return false
+	}
+	_, ok := resp.Trailer[http.CanonicalHeaderKey(key)]
+	return ok
+}
 
 func isDialError(err error) bool {
 	var urlErr *url.Error
@@ -47,6 +90,10 @@ func isDialError(err error) bool {
 func isRetryableHTTPTransportError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		return isRetryableStatusCode(statusErr.code)
 	}
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
@@ -79,11 +126,17 @@ func resetTimer(t *time.Timer, d time.Duration) {
 }
 
 func retryDial(closed <-chan struct{}, closedErr func() error, maxRetry int, minBackoff, maxBackoff time.Duration, fn func() error) error {
+	if minBackoff < 0 {
+		minBackoff = 0
+	}
+	if maxBackoff < minBackoff {
+		maxBackoff = minBackoff
+	}
 	backoff := minBackoff
 	for tries := 0; ; tries++ {
 		if err := fn(); err == nil {
 			return nil
-		} else if isDialError(err) && tries < maxRetry {
+		} else if (isDialError(err) || isRetryableHTTPTransportError(err)) && (maxRetry < 0 || tries < maxRetry) {
 			select {
 			case <-time.After(backoff):
 			case <-closed:
