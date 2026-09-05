@@ -45,8 +45,8 @@ type TunnelServerOptions struct {
 	// PathRoot is an optional first-level path prefix for all HTTP tunnel endpoints.
 	// Example: "aabbcc" => "/aabbcc/session", "/aabbcc/api/v1/upload", ...
 	PathRoot string
-	// AuthKey enables short-term HMAC auth for HTTP tunnel requests (anti-probing).
-	// When set (non-empty), the server requires each request to carry a valid Authorization bearer token.
+	// AuthKey enables the optional WebSocket HMAC anti-probing layer. Stream and
+	// poll sessions do not use a second HTTP-level authentication protocol.
 	AuthKey string
 	// AuthSkew controls allowed clock skew / replay window for AuthKey. 0 uses a conservative default.
 	AuthSkew time.Duration
@@ -66,7 +66,8 @@ type TunnelServer struct {
 	mode                TunnelMode
 	pathRoot            string
 	passThroughOnReject bool
-	auth                *tunnelAuth
+	// auth is used only by the WebSocket transport.
+	auth *tunnelAuth
 
 	pullReadTimeout time.Duration
 	sessionTTL      time.Duration
@@ -208,14 +209,9 @@ func (s *TunnelServer) HandleConn(rawConn net.Conn) (HandleResult, net.Conn, err
 		tunnelHeader = TunnelModeWS
 	}
 	if tunnelHeader == "" {
-		// Some CDNs / forward proxies may strip unknown headers. When AuthKey is enabled, we can
-		// safely infer the intended tunnel mode by verifying the Authorization token against
-		// both stream/poll modes and picking the one that matches.
-		tunnelHeader = s.inferTunnelModeFromAuth(req)
-		if tunnelHeader == "" {
-			// Not our tunnel; replay full bytes to legacy handler.
-			return passThrough(replayPrefix)
-		}
+		// The explicit mode header is part of the stream/poll protocol. A request
+		// without it belongs to the normal HTTP fallback path.
+		return passThrough(replayPrefix)
 	}
 
 	if s.mode == TunnelModeLegacy {
@@ -260,36 +256,6 @@ func buildInvalidHTTPReplayPrefix(first, headerBytes, buffered []byte) []byte {
 	out = append(out, headerBytes...)
 	out = append(out, buffered...)
 	return out
-}
-
-func (s *TunnelServer) inferTunnelModeFromAuth(req *httpRequestHeader) TunnelMode {
-	if s == nil || s.auth == nil || req == nil {
-		return ""
-	}
-	u, err := url.ParseRequestURI(req.target)
-	if err != nil || u == nil {
-		return ""
-	}
-	p, ok := stripPathRoot(s.pathRoot, u.Path)
-	if !ok || !s.isAllowedBasePath(p) {
-		return ""
-	}
-
-	authVal := req.headers["authorization"]
-	if authVal == "" {
-		authVal = u.Query().Get(tunnelAuthQueryKey)
-	}
-	now := time.Now()
-	streamOK := s.auth.verifyValue(authVal, TunnelModeStream, req.method, p, now)
-	pollOK := s.auth.verifyValue(authVal, TunnelModePoll, req.method, p, now)
-	switch {
-	case streamOK && !pollOK:
-		return TunnelModeStream
-	case pollOK && !streamOK:
-		return TunnelModePoll
-	default:
-		return ""
-	}
 }
 
 type httpRequestHeader struct {
@@ -530,14 +496,6 @@ func (s *TunnelServer) handleStream(rawConn net.Conn, req *httpRequestHeader, he
 	if !ok || !s.isAllowedBasePath(path) {
 		return s.rejectOrReply(rawConn, headerBytes, buffered, http.StatusNotFound, "not found")
 	}
-	authVal := req.headers["authorization"]
-	if authVal == "" {
-		authVal = u.Query().Get(tunnelAuthQueryKey)
-	}
-	if !s.auth.verifyValue(authVal, TunnelModeStream, req.method, path, time.Now()) {
-		return s.rejectOrReply(rawConn, headerBytes, buffered, http.StatusNotFound, "not found")
-	}
-
 	token := u.Query().Get("token")
 	closeFlag := u.Query().Get("close") == "1"
 	finFlag := u.Query().Get("fin") == "1"
@@ -708,14 +666,6 @@ func (s *TunnelServer) handlePoll(rawConn net.Conn, req *httpRequestHeader, head
 	if !ok || !s.isAllowedBasePath(path) {
 		return s.rejectOrReply(rawConn, headerBytes, buffered, http.StatusNotFound, "not found")
 	}
-	authVal := req.headers["authorization"]
-	if authVal == "" {
-		authVal = u.Query().Get(tunnelAuthQueryKey)
-	}
-	if !s.auth.verifyValue(authVal, TunnelModePoll, req.method, path, time.Now()) {
-		return s.rejectOrReply(rawConn, headerBytes, buffered, http.StatusNotFound, "not found")
-	}
-
 	token := u.Query().Get("token")
 	closeFlag := u.Query().Get("close") == "1"
 	finFlag := u.Query().Get("fin") == "1"

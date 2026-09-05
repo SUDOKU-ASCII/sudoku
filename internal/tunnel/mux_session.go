@@ -36,6 +36,8 @@ const (
 	muxFrameData  byte = 0x02
 	muxFrameClose byte = 0x03
 	muxFrameReset byte = 0x04
+	muxFramePing  byte = 0x05
+	muxFramePong  byte = 0x06
 )
 
 const (
@@ -66,20 +68,25 @@ type muxSession struct {
 	closeErr  error
 
 	lastWrite     atomic.Int64
+	lastPong      atomic.Int64
 	keepaliveOnce sync.Once
+	pongRequests  chan struct{}
 
 	onOpen func(stream *muxStream, payload []byte)
 }
 
 func newMuxSession(conn net.Conn, onOpen func(stream *muxStream, payload []byte)) *muxSession {
 	s := &muxSession{
-		conn:    conn,
-		streams: make(map[uint32]*muxStream),
-		closed:  make(chan struct{}),
-		onOpen:  onOpen,
+		conn:         conn,
+		streams:      make(map[uint32]*muxStream),
+		closed:       make(chan struct{}),
+		onOpen:       onOpen,
+		pongRequests: make(chan struct{}, 1),
 	}
 	s.lastWrite.Store(time.Now().UnixNano())
+	s.lastPong.Store(time.Now().UnixNano())
 	go s.readLoop()
+	go s.controlLoop()
 	return s
 }
 
@@ -189,6 +196,14 @@ func (s *muxSession) sendFrame(frameType byte, streamID uint32, payload []byte) 
 }
 
 func (s *muxSession) startKeepalive(interval time.Duration) {
+	s.startKeepaliveMode(interval, false)
+}
+
+func (s *muxSession) startPingKeepalive(interval time.Duration) {
+	s.startKeepaliveMode(interval, true)
+}
+
+func (s *muxSession) startKeepaliveMode(interval time.Duration, ping bool) {
 	if s == nil || interval <= 0 {
 		return
 	}
@@ -199,12 +214,19 @@ func (s *muxSession) startKeepalive(interval time.Duration) {
 			for {
 				select {
 				case <-ticker.C:
-					lastWrite := time.Unix(0, s.lastWrite.Load())
-					if time.Since(lastWrite) < interval {
+					if ping {
+						if time.Since(time.Unix(0, s.lastPong.Load())) > 3*interval {
+							s.closeWithError(errors.New("mux keepalive timeout"))
+							return
+						}
+						if err := s.sendFrame(muxFramePing, 0, nil); err != nil {
+							return
+						}
 						continue
 					}
-					// Stream 0 is never allocated. Existing peers, including
-					// v0.4.7, ignore DATA for unknown streams.
+					if time.Since(time.Unix(0, s.lastWrite.Load())) < interval {
+						continue
+					}
 					if err := s.sendFrame(muxFrameData, 0, nil); err != nil {
 						return
 					}
@@ -214,6 +236,25 @@ func (s *muxSession) startKeepalive(interval time.Duration) {
 			}
 		}()
 	})
+}
+
+func (s *muxSession) requestPong() {
+	select {
+	case s.pongRequests <- struct{}{}:
+	case <-s.closed:
+	default:
+	}
+}
+
+func (s *muxSession) controlLoop() {
+	for {
+		select {
+		case <-s.pongRequests:
+			_ = s.sendFrame(muxFramePong, 0, nil)
+		case <-s.closed:
+			return
+		}
+	}
 }
 
 func (s *muxSession) sendReset(streamID uint32, msg string) {
@@ -251,6 +292,20 @@ func (s *muxSession) readLoop() {
 		}
 
 		switch frameType {
+		case muxFramePing:
+			if streamID != 0 || len(payload) != 0 {
+				s.closeWithError(errors.New("invalid mux ping frame"))
+				return
+			}
+			s.requestPong()
+
+		case muxFramePong:
+			if streamID != 0 || len(payload) != 0 {
+				s.closeWithError(errors.New("invalid mux pong frame"))
+				return
+			}
+			s.lastPong.Store(time.Now().UnixNano())
+
 		case muxFrameOpen:
 			if s.onOpen == nil {
 				s.sendReset(streamID, "unexpected open")

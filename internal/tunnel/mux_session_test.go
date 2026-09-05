@@ -32,7 +32,7 @@ import (
 	"time"
 )
 
-func TestMuxSession_KeepaliveUsesV047CompatibleFrame(t *testing.T) {
+func TestMuxSession_KeepaliveUsesPingAndAcceptsPong(t *testing.T) {
 	clientConn, peerConn := net.Pipe()
 	session := newMuxSession(clientConn, nil)
 	t.Cleanup(func() {
@@ -40,15 +40,15 @@ func TestMuxSession_KeepaliveUsesV047CompatibleFrame(t *testing.T) {
 		_ = peerConn.Close()
 	})
 
-	session.startKeepalive(10 * time.Millisecond)
+	session.startPingKeepalive(10 * time.Millisecond)
 	_ = peerConn.SetReadDeadline(time.Now().Add(time.Second))
 
 	var header [muxHeaderSize]byte
 	if _, err := io.ReadFull(peerConn, header[:]); err != nil {
 		t.Fatalf("read keepalive: %v", err)
 	}
-	if header[0] != muxFrameData {
-		t.Fatalf("keepalive frame type = %d, want DATA", header[0])
+	if header[0] != muxFramePing {
+		t.Fatalf("keepalive frame type = %d, want PING", header[0])
 	}
 	if streamID := binary.BigEndian.Uint32(header[1:5]); streamID != 0 {
 		t.Fatalf("keepalive stream id = %d, want 0", streamID)
@@ -56,6 +56,7 @@ func TestMuxSession_KeepaliveUsesV047CompatibleFrame(t *testing.T) {
 	if payloadLen := binary.BigEndian.Uint32(header[5:9]); payloadLen != 0 {
 		t.Fatalf("keepalive payload length = %d, want 0", payloadLen)
 	}
+	_, _ = peerConn.Write(header[:])
 }
 
 func TestMuxSession_Echo(t *testing.T) {

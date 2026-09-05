@@ -45,7 +45,6 @@ type pollConn struct {
 	finURL     string
 	closeURL   string
 	headerHost string
-	auth       *tunnelAuth
 	uploadSeq  atomic.Uint64
 }
 
@@ -54,7 +53,7 @@ func (c *pollConn) closeWithError(err error) error {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	bestEffortCloseSession(c.client, c.closeURL, c.headerHost, TunnelModePoll, c.auth)
+	bestEffortCloseSession(c.client, c.closeURL, c.headerHost, TunnelModePoll)
 	return nil
 }
 
@@ -79,7 +78,6 @@ func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions)
 		finURL:     info.finURL,
 		closeURL:   info.closeURL,
 		headerHost: info.headerHost,
-		auth:       info.auth,
 		queuedConn: newQueuedConn(),
 	}
 
@@ -142,7 +140,6 @@ func (c *pollConn) pullLoop() {
 		}
 		req.Host = c.headerHost
 		applyTunnelHeaders(req.Header, c.headerHost, TunnelModePoll)
-		applyTunnelAuth(req, c.auth, TunnelModePoll, http.MethodGet, "/stream")
 
 		resp, err := c.client.Do(req)
 		if err != nil {
@@ -269,7 +266,6 @@ func (c *pollConn) pushLoop() {
 			}
 			req.Host = c.headerHost
 			applyTunnelHeaders(req.Header, c.headerHost, TunnelModePoll)
-			applyTunnelAuth(req, c.auth, TunnelModePoll, http.MethodPost, "/api/v1/upload")
 			req.Header.Set("Content-Type", "text/plain")
 
 			resp, err := c.client.Do(req)
@@ -367,7 +363,7 @@ func (c *pollConn) pushLoop() {
 						fail(fmt.Errorf("poll push flush failed: %w", err))
 						return
 					}
-					if err := sendSessionControl(c.client, c.finURL, c.headerHost, TunnelModePoll, c.auth); err != nil {
+					if err := sendSessionControl(c.client, c.finURL, c.headerHost, TunnelModePoll); err != nil {
 						fail(fmt.Errorf("poll FIN failed: %w", err))
 						return
 					}

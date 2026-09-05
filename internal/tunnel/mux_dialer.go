@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -279,7 +280,11 @@ func (d *MuxDialer) createSession(ctx context.Context) (*muxSession, error) {
 		return nil, net.ErrClosed
 	}
 	sess := newMuxSession(baseConn, nil)
-	sess.startKeepalive(muxKeepaliveInterval)
+	if d.Config.HTTPMaskTunnelEnabled() && strings.ToLower(strings.TrimSpace(d.Config.HTTPMask.Mode)) != "ws" {
+		sess.startPingKeepalive(muxKeepaliveInterval)
+	} else {
+		sess.startKeepalive(muxKeepaliveInterval)
+	}
 	return sess, nil
 }
 

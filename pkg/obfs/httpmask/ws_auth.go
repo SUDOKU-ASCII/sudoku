@@ -36,6 +36,11 @@ const (
 	tunnelAuthQueryKey     = "auth"
 )
 
+// tunnelAuth is intentionally used only by the WebSocket transport. The
+// stream and poll transports already have a cryptographic Sudoku handshake;
+// duplicating it at the HTTP layer adds latency and another compatibility
+// surface without improving tunnel security.
+
 type tunnelAuth struct {
 	key  [32]byte // derived HMAC key
 	skew time.Duration

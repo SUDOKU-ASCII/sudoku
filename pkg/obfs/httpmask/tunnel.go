@@ -83,8 +83,8 @@ type TunnelDialOptions struct {
 	// PathRoot is an optional first-level path prefix for all HTTP tunnel endpoints.
 	// Example: "aabbcc" => "/aabbcc/session", "/aabbcc/api/v1/upload", ...
 	PathRoot string
-	// AuthKey enables short-term HMAC auth for HTTP tunnel requests (anti-probing).
-	// When set (non-empty), each HTTP request carries an Authorization bearer token derived from AuthKey.
+	// AuthKey enables the optional WebSocket HMAC anti-probing layer. Stream and
+	// poll sessions authenticate with the Sudoku handshake and replay guard.
 	AuthKey string
 	// Upgrade optionally wraps the raw tunnel conn and/or writes a small prelude before DialTunnel returns.
 	// It is called with the raw tunnel conn; if it returns a non-nil conn, that conn is returned by DialTunnel.

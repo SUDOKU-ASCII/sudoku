@@ -162,7 +162,6 @@ type sessionDialInfo struct {
 	finURL     string
 	closeURL   string
 	headerHost string
-	auth       *tunnelAuth
 }
 
 func uploadURL(rawURL string, sequence uint64) (string, error) {
@@ -388,8 +387,6 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 		return nil, err
 	}
 	headerHost := canonicalHeaderHost(urlHost, scheme)
-	auth := newTunnelAuth(opts.AuthKey, 0)
-
 	httpClient := newHTTPClient(urlHost, dialAddr, serverName, scheme, 32, multiplexEnabled(opts.Multiplex))
 
 	authorizeURL := (&url.URL{Scheme: scheme, Host: urlHost, Path: joinPathRoot(opts.PathRoot, "/session")}).String()
@@ -405,7 +402,6 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 	}
 	req.Host = headerHost
 	applyTunnelHeaders(req.Header, headerHost, mode)
-	applyTunnelAuth(req, auth, mode, http.MethodGet, "/session")
 
 	// Overlap authorization, initial pull, and initial push connection handshakes.
 	// Keeping this to three avoids adding an extra WAN RTT before mux can open
@@ -458,11 +454,10 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 		finURL:     finURL,
 		closeURL:   closeURL,
 		headerHost: headerHost,
-		auth:       auth,
 	}, nil
 }
 
-func sendSessionControl(client *http.Client, controlURL, headerHost string, mode TunnelMode, auth *tunnelAuth) error {
+func sendSessionControl(client *http.Client, controlURL, headerHost string, mode TunnelMode) error {
 	const maxAttempts = 3
 
 	if client == nil {
@@ -483,7 +478,6 @@ func sendSessionControl(client *http.Client, controlURL, headerHost string, mode
 		}
 		req.Host = headerHost
 		applyTunnelHeaders(req.Header, headerHost, mode)
-		applyTunnelAuth(req, auth, mode, http.MethodPost, "/api/v1/upload")
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -512,8 +506,8 @@ func sendSessionControl(client *http.Client, controlURL, headerHost string, mode
 	return lastErr
 }
 
-func bestEffortCloseSession(client *http.Client, closeURL, headerHost string, mode TunnelMode, auth *tunnelAuth) {
-	_ = sendSessionControl(client, closeURL, headerHost, mode, auth)
+func bestEffortCloseSession(client *http.Client, closeURL, headerHost string, mode TunnelMode) {
+	_ = sendSessionControl(client, closeURL, headerHost, mode)
 }
 
 func normalizeHTTPDialTarget(serverAddress string, tlsEnabled bool, hostOverride string) (scheme, urlHost, dialAddr, serverName string, err error) {

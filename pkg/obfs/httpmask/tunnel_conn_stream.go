@@ -49,7 +49,6 @@ type streamSplitConn struct {
 	finURL     string
 	closeURL   string
 	headerHost string
-	auth       *tunnelAuth
 	uploadSeq  atomic.Uint64
 }
 
@@ -64,7 +63,7 @@ func (c *streamSplitConn) closeWithError(err error) error {
 		c.cancel()
 	}
 
-	bestEffortCloseSession(c.client, c.closeURL, c.headerHost, TunnelModeStream, c.auth)
+	bestEffortCloseSession(c.client, c.closeURL, c.headerHost, TunnelModeStream)
 	return nil
 }
 
@@ -85,7 +84,6 @@ func dialStreamSplit(ctx context.Context, serverAddress string, opts TunnelDialO
 		finURL:     info.finURL,
 		closeURL:   info.closeURL,
 		headerHost: info.headerHost,
-		auth:       info.auth,
 		queuedConn: newQueuedConn(),
 	}
 
@@ -155,7 +153,6 @@ func (c *streamSplitConn) pullLoop() {
 		}
 		req.Host = c.headerHost
 		applyTunnelHeaders(req.Header, c.headerHost, TunnelModeStream)
-		applyTunnelAuth(req, c.auth, TunnelModeStream, http.MethodGet, "/stream")
 
 		resp, err := c.client.Do(req)
 		if err != nil {
@@ -294,7 +291,6 @@ func (c *streamSplitConn) pushLoop() {
 			}
 			req.Host = c.headerHost
 			applyTunnelHeaders(req.Header, c.headerHost, TunnelModeStream)
-			applyTunnelAuth(req, c.auth, TunnelModeStream, http.MethodPost, "/api/v1/upload")
 			req.Header.Set("Content-Type", "application/octet-stream")
 			resp, err := c.client.Do(req)
 			if err != nil {
@@ -370,7 +366,7 @@ func (c *streamSplitConn) pushLoop() {
 						fail(fmt.Errorf("stream push flush failed: %w", err))
 						return
 					}
-					if err := sendSessionControl(c.client, c.finURL, c.headerHost, TunnelModeStream, c.auth); err != nil {
+					if err := sendSessionControl(c.client, c.finURL, c.headerHost, TunnelModeStream); err != nil {
 						fail(fmt.Errorf("stream FIN failed: %w", err))
 						return
 					}
