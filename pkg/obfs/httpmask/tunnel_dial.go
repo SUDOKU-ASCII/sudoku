@@ -436,7 +436,10 @@ func sendSessionControl(client *http.Client, controlURL, headerHost string, mode
 	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var lastErr error
+	var (
+		lastErr error
+		backoff = 50 * time.Millisecond
+	)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		req, err := http.NewRequestWithContext(closeCtx, http.MethodPost, controlURL, nil)
 		if err != nil {
@@ -448,7 +451,11 @@ func sendSessionControl(client *http.Client, controlURL, headerHost string, mode
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
-			if closeCtx.Err() == nil && (isDialError(err) || isRetryableHTTPTransportError(err)) {
+			if closeCtx.Err() == nil && (isDialError(err) || isRetryableHTTPTransportError(err) || errors.Is(err, context.DeadlineExceeded)) && attempt+1 < maxAttempts {
+				if err := waitRetry(closeCtx.Done(), nil, backoff); err != nil {
+					return err
+				}
+				backoff *= 2
 				continue
 			}
 			return err
@@ -460,14 +467,25 @@ func sendSessionControl(client *http.Client, controlURL, headerHost string, mode
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4*1024))
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			if attempt > 0 && (resp.StatusCode == http.StatusForbidden ||
-				resp.StatusCode == http.StatusNotFound ||
-				resp.StatusCode == http.StatusGone) {
+			// A 403/404/410 means the server already discarded the session.
+			// Treat that as an idempotent close success regardless of attempt.
+			if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 				return nil
 			}
-			return fmt.Errorf("session control bad status: %s", resp.Status)
+			lastErr = statusError(resp)
+			if isRetryableStatusCode(resp.StatusCode) && attempt+1 < maxAttempts {
+				if err := waitRetry(closeCtx.Done(), nil, backoff); err != nil {
+					return err
+				}
+				backoff *= 2
+				continue
+			}
+			return lastErr
 		}
 		return nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("session control failed")
 	}
 	return lastErr
 }
