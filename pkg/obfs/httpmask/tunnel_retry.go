@@ -65,14 +65,6 @@ func closeIdleConnections(client *http.Client) {
 	}
 }
 
-func responseDeclaresTrailer(resp *http.Response, key string) bool {
-	if resp == nil {
-		return false
-	}
-	_, ok := resp.Trailer[http.CanonicalHeaderKey(key)]
-	return ok
-}
-
 func isDialError(err error) bool {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {

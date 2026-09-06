@@ -224,40 +224,6 @@ func (c *tunnelHTTPClient) preconnect(ctx context.Context, req *http.Request, co
 	return c.transport.dialer.preconnect(ctx, req.URL.Scheme == "https", count)
 }
 
-func (c *tunnelHTTPClient) directPreconnectTarget(rawURL string) (*preconnectDialer, bool, bool) {
-	if c == nil || c.transport == nil || c.transport.transport == nil || c.transport.dialer == nil ||
-		strings.TrimSpace(rawURL) == "" {
-		return nil, false, false
-	}
-	req, err := http.NewRequest(http.MethodPost, rawURL, nil)
-	if err != nil {
-		return nil, false, false
-	}
-	if proxy := c.transport.transport.Proxy; proxy != nil {
-		proxyURL, err := proxy(req)
-		if err != nil || proxyURL != nil {
-			return nil, false, false
-		}
-	}
-	return c.transport.dialer, req.URL.Scheme == "https", true
-}
-
-func (c *tunnelHTTPClient) maintainPreconnect(ctx context.Context, rawURL string, count int) {
-	dialer, tlsEnabled, ok := c.directPreconnectTarget(rawURL)
-	if !ok || count <= 0 {
-		return
-	}
-	dialer.maintainPreconnect(ctx, tlsEnabled, count)
-}
-
-func (c *tunnelHTTPClient) waitPreconnect(ctx context.Context, closed <-chan struct{}, rawURL string, count int) error {
-	dialer, _, ok := c.directPreconnectTarget(rawURL)
-	if !ok || count <= 0 {
-		return nil
-	}
-	return dialer.pool.waitReady(ctx, closed, count)
-}
-
 // transportCache bounds the memory footprint of globally reused HTTP transports and dialers.
 //
 // Each dial creates its own http.Client, but clients can share Transports to reuse

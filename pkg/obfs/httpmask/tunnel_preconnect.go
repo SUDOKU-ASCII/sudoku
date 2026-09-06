@@ -44,14 +44,12 @@ type preparedConnPool struct {
 	ready   []*preparedConn
 	pending int
 	changed chan struct{}
-	refill  chan struct{}
 	closed  bool
 }
 
 func newPreparedConnPool() *preparedConnPool {
 	return &preparedConnPool{
 		changed: make(chan struct{}),
-		refill:  make(chan struct{}, 1),
 	}
 }
 
@@ -60,34 +58,9 @@ func (p *preparedConnPool) notifyLocked() {
 	p.changed = make(chan struct{})
 }
 
-func (p *preparedConnPool) requestRefillLocked() {
-	select {
-	case p.refill <- struct{}{}:
-	default:
-	}
-}
-
 func (p *preparedConnPool) prepare(
 	ctx context.Context,
 	count int,
-	dial func(context.Context) (net.Conn, error),
-	done func(),
-) {
-	p.prepareInternal(ctx, count, false, dial, done)
-}
-
-func (p *preparedConnPool) ensure(
-	ctx context.Context,
-	count int,
-	dial func(context.Context) (net.Conn, error),
-) {
-	p.prepareInternal(ctx, count, true, dial, nil)
-}
-
-func (p *preparedConnPool) prepareInternal(
-	ctx context.Context,
-	count int,
-	ensure bool,
 	dial func(context.Context) (net.Conn, error),
 	done func(),
 ) {
@@ -105,16 +78,6 @@ func (p *preparedConnPool) prepareInternal(
 			done()
 		}
 		return
-	}
-	if ensure {
-		count -= len(p.ready) + p.pending
-		if count <= 0 {
-			p.mu.Unlock()
-			if done != nil {
-				done()
-			}
-			return
-		}
 	}
 	p.pending += count
 	p.notifyLocked()
@@ -169,7 +132,6 @@ func (p *preparedConnPool) take(ctx context.Context) (net.Conn, bool, error) {
 			p.ready[0] = nil
 			p.ready = p.ready[1:]
 			p.notifyLocked()
-			p.requestRefillLocked()
 			p.mu.Unlock()
 			if item == nil || item.conn == nil {
 				continue
@@ -195,43 +157,6 @@ func (p *preparedConnPool) take(ctx context.Context) (net.Conn, bool, error) {
 	}
 }
 
-func (p *preparedConnPool) waitReady(ctx context.Context, closed <-chan struct{}, count int) error {
-	if p == nil || count <= 0 {
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	for {
-		select {
-		case <-closed:
-			return net.ErrClosed
-		default:
-		}
-
-		p.mu.Lock()
-		if len(p.ready) >= count {
-			p.mu.Unlock()
-			return nil
-		}
-		if p.closed {
-			p.mu.Unlock()
-			return net.ErrClosed
-		}
-		changed := p.changed
-		p.mu.Unlock()
-
-		select {
-		case <-changed:
-		case <-closed:
-			return net.ErrClosed
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-}
-
 func (p *preparedConnPool) expire(item *preparedConn) {
 	delay := time.Until(item.expiresAt)
 	if delay < 0 {
@@ -250,7 +175,6 @@ func (p *preparedConnPool) expire(item *preparedConn) {
 		p.ready[len(p.ready)-1] = nil
 		p.ready = p.ready[:len(p.ready)-1]
 		p.notifyLocked()
-		p.requestRefillLocked()
 		p.mu.Unlock()
 		_ = item.conn.Close()
 		return
@@ -318,41 +242,6 @@ func (d *preconnectDialer) preconnect(ctx context.Context, tlsEnabled bool, coun
 		return d.dialFresh(dialCtx, "tcp", d.urlHost)
 	}, cancel)
 	return cancel
-}
-
-func (d *preconnectDialer) maintainPreconnect(ctx context.Context, tlsEnabled bool, count int) {
-	if d == nil || d.pool == nil || count <= 0 {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	const retryInterval = 500 * time.Millisecond
-	ticker := time.NewTicker(retryInterval)
-	defer ticker.Stop()
-
-	ensure := func() {
-		d.pool.ensure(ctx, count, func(ctx context.Context) (net.Conn, error) {
-			dialCtx, cancel := context.WithTimeout(ctx, tunnelTLSHandshakeTimeout)
-			defer cancel()
-			if tlsEnabled {
-				return d.dialTLSFresh(dialCtx, "tcp", d.urlHost)
-			}
-			return d.dialFresh(dialCtx, "tcp", d.urlHost)
-		})
-	}
-
-	ensure()
-	for {
-		select {
-		case <-ticker.C:
-		case <-d.pool.refill:
-		case <-ctx.Done():
-			return
-		}
-		ensure()
-	}
 }
 
 func (d *preconnectDialer) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
