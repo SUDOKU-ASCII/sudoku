@@ -1,6 +1,6 @@
 # 更新日志
 
-## v0.5.2-01（2026-11-01）
+## v0.5.2-1（2026-11-01）
 - `fix/socks5`: 修复本地 SOCKS5 客户端 UDP ASSOCIATE 选中无关网卡地址的问题（#37）。loopback 客户端现在保留 loopback 中继，并按 UDP 请求的地址族选择 IPv4/IPv6；LAN 客户端仍使用实际接入的网关地址。补上相反地址族 direct 目标的代理回退，避免 udp6 中继直写 IPv4 失败时拆掉整个 UDP 关联；IPv6 不可用时回退到控制连接地址族。
 - `security`: Linux 构建通过 `//go:debug multipathtcp=0` 关闭 MPTCP 监听，移除 CVE-2026-98432 已公开利用链所需的 MPTCP listener；完整修复仍需升级宿主内核。
 - `docs`: 反向代理支持与 Sudoku 协议端口复用：`reverse.listen` 绑定回环地址，并把 `fallback_address` 指向该地址即可只公开一个端口。
