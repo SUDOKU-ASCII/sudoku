@@ -17,6 +17,11 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 In addition, no derivative work may use the name or imply association
 with this application without prior consent.
 */
+// Go 1.24+ enables MPTCP for TCP listeners by default on Linux, and an MPTCP
+// listener is the precondition of the published CVE-2026-98432 exploit chain.
+// This program does not use MPTCP; keep listeners on plain TCP. The complete
+// fix is a patched host kernel -- this only removes the MPTCP attack path.
+//go:debug multipathtcp=0
 package main
 
 import (
