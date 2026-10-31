@@ -149,3 +149,4 @@ ssh -p 2222 127.0.0.1
 ```
 Notes:
 - The TCP tunnel endpoint is the **exact path** `/ssh` (no trailing slash) and negotiates WebSocket subprotocol `sudoku-tcp-v1`.
+- Port reuse (optional): `reverse.listen` does not need to be exposed separately. Bind it to a loopback address (for example `127.0.0.1:8081`), set `fallback_address` to the same address and `suspicious_action` to `"fallback"`, and expose only Sudoku's protocol port (`local_port`, e.g. 8080). Traffic that cannot complete the Sudoku handshake falls back to the reverse entry, and reverse-proxy URLs use that same port, for example `http://<server>:8080/gitea/`.

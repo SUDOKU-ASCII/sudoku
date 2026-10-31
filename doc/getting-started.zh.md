@@ -152,3 +152,4 @@ ssh -p 2222 127.0.0.1
 注意：
 - TCP 隧道入口是 **精确路径** `/ssh`（不要带尾斜杠），并协商 WebSocket 子协议 `sudoku-tcp-v1`。
 - 自签证书自测可加 `-rev-insecure`（生产环境不要用）。
+- 端口复用（可选）：不需要额外开放 `reverse.listen`。将其绑定到回环地址（如 `127.0.0.1:8081`），并把 `fallback_address` 设为同一地址、`suspicious_action` 设为 `"fallback"`，即可只公开 Sudoku 的协议端口（`local_port`，如 8080）；无法完成 Sudoku 握手的流量会回落到反代入口，反代访问也使用该端口，例如 `http://<server>:8080/gitea/`。

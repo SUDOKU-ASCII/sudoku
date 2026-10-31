@@ -151,6 +151,7 @@ HTTP 相关字段集中在 `httpmask` 对象中。
 ```
 
 - 服务端配置只需要设置 `reverse.listen` 来开启入口端口；要暴露哪些服务永远由客户端 `routes` 决定。
+- 端口复用（可选）：无需额外对外开放 `reverse.listen`。将它绑定到回环地址（如 `127.0.0.1:8081`），把 `fallback_address` 设为同一地址并将 `suspicious_action` 设为 `"fallback"`，即可只公开 Sudoku 的协议端口（`local_port`，如 8080）；无法完成 Sudoku 握手的流量会回落到反代入口，反代 URL 也使用该端口，例如 `http://<server>:8080/gitea/`。
 - 反向代理会默认把客户端上行切到 `packed`，以降低 reverse-proxy 场景的客户端上行带宽压力；普通正向代理流量仍保持 `pure` 上行。
 - reverse 会话现在要求使用 `packed` 上行；注册反向代理时应使用内置的 reverse helper，而不是 `DialBase`。
 - `listen`（服务端）：对外暴露的入口地址。

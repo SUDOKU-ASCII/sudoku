@@ -151,6 +151,7 @@ Client routes:
 ```
 
 - Server config only needs `reverse.listen` to open the entry port. Routes are always defined on the client.
+- Port reuse (optional): `reverse.listen` does not need to be exposed separately. Bind it to a loopback address (for example `127.0.0.1:8081`), set `fallback_address` to the same address and `suspicious_action` to `"fallback"`, and expose only Sudoku's protocol port (`local_port`, e.g. 8080). Traffic that cannot complete the Sudoku handshake falls back to the reverse entry, and reverse-proxy URLs use that same port, for example `http://<server>:8080/gitea/`.
 - Reverse sessions now default to `packed` uplink on the client side to reduce reverse-proxy upload overhead. Normal forward proxy traffic still keeps `pure` uplink.
 - Reverse sessions now require `packed` uplink. Use the built-in reverse helpers instead of `DialBase` for reverse registration.
 - `listen` (server): the public reverse entry address.
