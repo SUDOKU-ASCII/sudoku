@@ -23,11 +23,15 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"time"
 
 	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
 )
+
+// socks5UDPAssociateTimeout bounds the request read so a truncated request cannot pin the goroutine.
+const socks5UDPAssociateTimeout = 10 * time.Second
 
 func writeSocks5Reply(w io.Writer, rep byte) {
 	// VER, REP, RSV, ATYP, BND.ADDR(IPv4=0.0.0.0), BND.PORT(0)
@@ -82,11 +86,25 @@ func (c *client) handleSocks5(conn net.Conn) {
 }
 
 func (c *client) handleSocks5UDPAssociate(ctrl net.Conn) {
+	_ = ctrl.SetReadDeadline(time.Now().Add(socks5UDPAssociateTimeout))
+	_, _, requestedIP, err := protocol.ReadAddress(ctrl)
+	_ = ctrl.SetReadDeadline(time.Time{})
+	if err != nil {
+		writeSocks5Reply(ctrl, 0x01)
+		return
+	}
 	localIP := ipFromNetAddr(ctrl.LocalAddr())
 	remoteIP := ipFromNetAddr(ctrl.RemoteAddr())
-	advertiseIP := selectUDPAssociateAdvertiseIP(localIP, remoteIP)
+	advertiseIP := udpAssociateAdvertiseIP(localIP, remoteIP, requestedIP)
 
 	udpConn, udpNet, err := listenUDPAssociate(localIP, remoteIP, advertiseIP)
+	if err != nil && advertiseIP != nil && advertiseIP.IsLoopback() {
+		// The requested loopback family may not exist on this host (e.g. IPv6
+		// disabled). Fall back to the control connection's family; opposite-
+		// family destinations are still proxied by the session.
+		advertiseIP = selectUDPAssociateAdvertiseIP(localIP, remoteIP)
+		udpConn, udpNet, err = listenUDPAssociate(localIP, remoteIP, advertiseIP)
+	}
 	if err != nil {
 		writeSocks5Reply(ctrl, 0x01)
 		return

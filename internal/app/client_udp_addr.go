@@ -24,10 +24,6 @@ import (
 	"net/netip"
 )
 
-// Seams so tests can fake the host's network interfaces.
-var networkInterfaces = net.Interfaces
-var interfaceAddrs = func(iface net.Interface) ([]net.Addr, error) { return iface.Addrs() }
-
 func normalizeIP(ip net.IP) net.IP {
 	if ip == nil {
 		return nil
@@ -112,46 +108,23 @@ func listenUDPAssociate(localIP net.IP, remoteIP net.IP, bindIP net.IP) (*net.UD
 }
 
 // selectUDPAssociateAdvertiseIP picks the BND.ADDR to advertise, or nil to tell the client to reuse
-// the TCP endpoint host. Loopback is never advertised (that would pin clients to 127.0.0.1), so it is
-// swapped for the first usable interface address.
+// the TCP endpoint host. Local clients keep the control connection's loopback address
+// and IP family; LAN clients keep the gateway address they actually connected to.
 func selectUDPAssociateAdvertiseIP(localIP net.IP, remoteIP net.IP) net.IP {
 	switch {
 	case localIP == nil || localIP.IsUnspecified():
 		return nil
 	case localIP.IsLoopback():
-		return firstGlobalUnicastIPv4()
+		if remoteIP != nil && remoteIP.IsLoopback() && sameIPFamily(localIP, remoteIP) {
+			return localIP
+		}
+		return nil
 	case !localIP.IsGlobalUnicast():
 		return nil
 	case localIP.IsPrivate() && (remoteIP == nil || !remoteIP.IsPrivate()):
 		return nil
 	}
 	return localIP
-}
-
-func firstGlobalUnicastIPv4() net.IP {
-	ifaces, err := networkInterfaces()
-	if err != nil {
-		return nil
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&(net.FlagLoopback|net.FlagPointToPoint) != 0 {
-			continue
-		}
-		addrs, err := interfaceAddrs(iface)
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			ipNet, ok := addr.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			if ip := ipNet.IP.To4(); ip != nil && ip.IsGlobalUnicast() {
-				return ip
-			}
-		}
-	}
-	return nil
 }
 
 // initialUDPAssociateClientIP is the datagram source allowed before the first packet arrives.
@@ -167,4 +140,18 @@ func initialUDPAssociateClientIP(ip net.IP) net.IP {
 func addrFromIP(ip net.IP) netip.Addr {
 	a, _ := netip.AddrFromSlice(ip)
 	return a.Unmap()
+}
+
+// A local SOCKS client may use a UDP family different from its TCP control
+// connection (for example dae's IPv6 UDP flows through an IPv4 proxy URL).
+// Honor concrete request addresses only for loopback peers. LAN peers keep
+// the actual gateway endpoint; never advertise loopback to a remote client.
+func udpAssociateAdvertiseIP(localIP, remoteIP, requestedIP net.IP) net.IP {
+	if localIP != nil && remoteIP != nil && localIP.IsLoopback() && remoteIP.IsLoopback() && requestedIP != nil && !requestedIP.IsUnspecified() {
+		if requestedIP.To4() != nil {
+			return net.IPv4(127, 0, 0, 1)
+		}
+		return net.IPv6loopback
+	}
+	return selectUDPAssociateAdvertiseIP(localIP, remoteIP)
 }

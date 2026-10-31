@@ -142,16 +142,21 @@ type udpSessionHarness struct {
 
 func newUDPSessionHarness(t testing.TB, cfg *config.Config, mgrs *routeManagers, keep bool) *udpSessionHarness {
 	t.Helper()
-	relay, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	return newUDPSessionHarnessOn(t, cfg, mgrs, keep, "udp4", net.IPv4(127, 0, 0, 1))
+}
+
+func newUDPSessionHarnessOn(t testing.TB, cfg *config.Config, mgrs *routeManagers, keep bool, network string, bindIP net.IP) *udpSessionHarness {
+	t.Helper()
+	relay, err := net.ListenUDP(network, &net.UDPAddr{IP: bindIP})
 	if err != nil {
-		t.Fatalf("listen relay: %v", err)
+		t.Fatalf("listen relay (%s): %v", network, err)
 	}
 	h := &udpSessionHarness{
 		uot:    &uotRecorder{keep: keep},
 		sink:   newUDPSocket(t, keep),
 		client: newUDPSocket(t, keep),
 	}
-	h.sess = newUoTClientSession(NewMockConn(nil), relay, h.uot, "udp4", newTestClient(t, cfg.ProxyMode, mgrs, nil), []string{"node", groupProxy})
+	h.sess = newUoTClientSession(NewMockConn(nil), relay, h.uot, network, newTestClient(t, cfg.ProxyMode, mgrs, nil), []string{"node", groupProxy})
 	t.Cleanup(h.sess.close)
 	return h
 }
@@ -310,6 +315,22 @@ func TestUDPSessionDirectFallbacks(t *testing.T) {
 				t.Fatalf("frames = %+v", got)
 			}
 		})
+	}
+}
+
+// An IPv6 loopback relay cannot send to an IPv4 direct destination; the datagram must go through the
+// proxy instead of failing the send and tearing down the whole association.
+func TestUDPSessionIPv4DirectOnIPv6RelayIsProxied(t *testing.T) {
+	probe, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6loopback})
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	_ = probe.Close()
+
+	h := newUDPSessionHarnessOn(t, &config.Config{ProxyMode: "direct"}, nil, true, "udp6", net.IPv6loopback)
+	h.fromClient(t, "8.8.8.8:53", "v4-direct-on-v6-relay")
+	if got := h.waitForFrames(t, 1); got[0] != (udpFrame{"8.8.8.8:53", "v4-direct-on-v6-relay"}) {
+		t.Fatalf("frames = %+v", got)
 	}
 }
 

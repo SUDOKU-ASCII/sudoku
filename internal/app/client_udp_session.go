@@ -177,6 +177,12 @@ func (s *uotClientSession) relayClientDatagram(from netip.AddrPort, pkt []byte) 
 		case direct.Addr().Is6() && s.udpNet == "udp4":
 			decision.action = routeActionProxy
 			decision.match += "/IPV6->PROXY"
+		case !direct.Addr().Is6() && s.udpNet == "udp6":
+			// A relay bound to an IPv6 loopback only (selected from the UDP
+			// ASSOCIATE request family) cannot send to IPv4 directly. Proxy it
+			// instead of tearing down the whole association on sendto failure.
+			decision.action = routeActionProxy
+			decision.match += "/IPV4->PROXY"
 		default:
 			s.peers.Add(direct, udpPeerTTL)
 			if _, err := s.udpConn.WriteToUDPAddrPort(req.payload, direct); err != nil {
